@@ -217,7 +217,36 @@ class AutonomousRunner:
                     art.train, art.eval = await self._phase_sft(art.golden, client)
                 if "rewards" in phases or "curation" in phases:
                     art.rewards = await self._phase_rewards(art.golden, client)
-                report = self._grade(art)
+                next_report = self._grade(art)
+                # No-progress guard: if the overall score did not improve AND
+                # the same phases failed, the loop is structurally stuck (e.g.
+                # the golden doc just cannot produce a reward bundle because
+                # the include_kinds list is empty). Bail with a warning rather
+                # than burn the remaining iteration budget.
+                if (
+                    next_report.overall() <= report.overall() + 0.5
+                    and self._phases_to_rerun(next_report) == phases
+                ):
+                    logger.warning(
+                        "Iteration %d made no progress (overall %.1f -> %.1f) on "
+                        "the same failing phases %s — aborting retry loop. "
+                        "Consider widening the inputs or relaxing the threshold.",
+                        it,
+                        report.overall(),
+                        next_report.overall(),
+                        phases,
+                    )
+                    self.history.append(
+                        IterationResult(
+                            iteration=it,
+                            report=next_report,
+                            phases_re_run=phases,
+                            config_snapshot=self._config_snapshot(),
+                        )
+                    )
+                    report = next_report
+                    break
+                report = next_report
                 self.history.append(
                     IterationResult(
                         iteration=it,

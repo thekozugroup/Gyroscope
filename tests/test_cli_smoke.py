@@ -176,7 +176,16 @@ def test_run_subcommand_drives_autonomous_runner(
             self.history = [runner_mod.IterationResult(iteration=0, report=r, config_snapshot={})]
 
         async def run(self) -> object:
-            (captured["output_dir"] / "history.json").write_text("[]", encoding="utf-8")  # type: ignore[union-attr]
+            # The REAL AutonomousRunner.run writes both history.json AND the
+            # three report.{md,html,json} artefacts. Mirror that contract in
+            # the fake so the smoke test pins what the CLI itself must NOT
+            # take on (the runner owns the report writers).
+            out: Path = captured["output_dir"]  # type: ignore[assignment]
+            out.mkdir(parents=True, exist_ok=True)
+            (out / "history.json").write_text("[]", encoding="utf-8")
+            (out / "report.md").write_text("# stub\n", encoding="utf-8")
+            (out / "report.html").write_text("<html></html>", encoding="utf-8")
+            (out / "report.json").write_text("{}", encoding="utf-8")
             return object()
 
     monkeypatch.setattr(runner_mod, "AutonomousRunner", _FakeRunner)
@@ -208,8 +217,15 @@ def test_run_subcommand_drives_autonomous_runner(
     assert captured["cfg_max_iter"] == 1
     assert captured["n_trajectories"] == 3
     assert captured["reward_budget"] == 5
-    assert (tmp_path / "out" / "config.json").exists()
-    assert (tmp_path / "out" / "history.json").exists()
+    out_dir = tmp_path / "out"
+    assert (out_dir / "config.json").exists()
+    assert (out_dir / "history.json").exists()
+    # The CLI must NOT take on report-writing duties itself — every report
+    # artefact present must have been written by the runner. Confirm by
+    # comparing against the stub content the fake runner wrote.
+    assert (out_dir / "report.md").read_text(encoding="utf-8") == "# stub\n"
+    assert (out_dir / "report.html").read_text(encoding="utf-8") == "<html></html>"
+    assert (out_dir / "report.json").read_text(encoding="utf-8") == "{}"
 
 
 def test_run_subcommand_exits_nonzero_when_axes_fail(

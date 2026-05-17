@@ -339,32 +339,46 @@ class WebLoader(Loader):
                 children.append(link)
             return children
 
-        while queue and len(visited) < self.max_pages:
-            batch: list[tuple[str, int, str]] = []
-            while (
-                queue
-                and len(batch) < self.concurrency
-                and (len(visited) + len(batch)) < self.max_pages
-            ):
+        # Sliding-window worker pool. The old "build a batch then gather"
+        # loop stalled the whole batch on the slowest fetch — under variable
+        # latency, effective concurrency dipped well below ``self.concurrency``.
+        # Now we keep up to ``self.concurrency`` fetches in flight at all times,
+        # replenishing each completed slot from the queue immediately.
+        in_flight: dict[asyncio.Task[list[str]], tuple[str, int, str]] = {}
+
+        def _enqueue_next() -> bool:
+            """Pop the next unvisited URL and schedule it; return True on success."""
+            while queue and len(visited) < self.max_pages:
                 url, depth, seed = queue.popleft()
                 url = _normalise_url(url)
                 if url in visited:
                     continue
                 visited.add(url)
-                batch.append((url, depth, seed))
+                task = asyncio.create_task(_process(url, depth, seed))
+                in_flight[task] = (url, depth, seed)
+                return True
+            return False
 
-            if not batch:
+        # Prime the window with up to ``self.concurrency`` initial fetches.
+        for _ in range(self.concurrency):
+            if not _enqueue_next():
                 break
 
-            children_lists = await asyncio.gather(
-                *[_process(u, d, s) for u, d, s in batch],
-                return_exceptions=False,
-            )
-            for (_, depth, seed), children in zip(batch, children_lists, strict=True):
+        while in_flight:
+            done, _ = await asyncio.wait(in_flight, return_when=asyncio.FIRST_COMPLETED)
+            for task in done:
+                _, depth, _seed = in_flight.pop(task)
+                try:
+                    children = task.result()
+                except Exception as exc:
+                    logger.warning("WebLoader fetch task raised: %s", exc)
+                    children = []
                 for link in children:
                     if link in visited:
                         continue
-                    queue.append((link, depth + 1, seed))
+                    queue.append((link, depth + 1, _seed))
+                # Refill the freed slot.
+                _enqueue_next()
 
         # Stable ordering by URL for determinism.
         results.sort(key=lambda d: d.source)

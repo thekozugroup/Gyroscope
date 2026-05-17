@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import random
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -27,10 +28,10 @@ from anthropic import (
     RateLimitError,
 )
 from tenacity import (
+    RetryCallState,
     retry,
     retry_if_exception,
     stop_after_attempt,
-    wait_random_exponential,
 )
 
 from gyroscope.core.config import GyroscopeConfig
@@ -50,6 +51,22 @@ _RETRYABLE_STATUS_CODES: frozenset[int] = frozenset({408, 409, 425, 429, 500, 50
 
 # Optional: APITimeoutError may not exist on older SDK versions.
 _APITimeoutError: type[BaseException] | None = getattr(anthropic, "APITimeoutError", None)
+
+
+def _decorrelated_jitter_wait(state: RetryCallState) -> float:
+    """Decorrelated-jitter backoff.
+
+    AWS-style decorrelated jitter: ``delay_n = min(cap, U(base, prev * 3))``.
+    Spreads retry timings more aggressively than plain jittered exponential,
+    so a synchronised 429 burst across many concurrent workers does not all
+    retry at the same wall-clock tick on the next round.
+    """
+    base = 1.0
+    cap = 60.0
+    prev = float(getattr(state, "idle_for", 0.0) or 0.0)
+    if state.attempt_number <= 1 or prev <= 0.0:
+        return base
+    return min(cap, random.uniform(base, prev * 3.0))
 
 
 def _is_retryable_llm_error(exc: BaseException) -> bool:
@@ -146,7 +163,7 @@ class LLMClient:
     @retry(
         retry=retry_if_exception(_is_retryable_llm_error),
         stop=stop_after_attempt(5),
-        wait=wait_random_exponential(multiplier=1, max=60),
+        wait=_decorrelated_jitter_wait,
         reraise=True,
     )
     async def _complete_raw(
