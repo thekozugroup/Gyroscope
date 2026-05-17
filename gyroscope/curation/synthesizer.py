@@ -29,9 +29,15 @@ from gyroscope.core.models import (
 
 _TOKEN_RE = re.compile(r"[A-Za-z0-9]+")
 
-# Items with Jaccard at or above this on their normalised statements are
-# treated as semantic duplicates and collapsed.
-_DEDUP_JACCARD = 0.8
+
+class EmptyBoKError(RuntimeError):
+    """Raised when the synthesizer cannot build a usable GoldenDocument.
+
+    The corpus produced an empty Identity role *or* zero principles,
+    procedures, and knowledge items. There is no downstream phase that can
+    operate on such an artefact, so we fail loudly rather than write an
+    empty ``golden.md`` and let SFT / reward design silently degenerate.
+    """
 
 
 @dataclass(frozen=True)
@@ -66,9 +72,10 @@ def _dedup_by_statement(
     *,
     statement_attr: str,
     citations_attr: str,
+    threshold: float,
 ) -> list:
     """Greedy near-duplicate collapse: walk items in order, keep an item
-    only when its tokenised statement is below the Jaccard threshold
+    only when its tokenised statement is below ``threshold`` Jaccard
     against every already-kept item. When collapsing, merge the dropped
     item's citation ids into the survivor."""
     kept: list = []
@@ -78,7 +85,7 @@ def _dedup_by_statement(
         toks = _tokens(statement)
         merged_into: int | None = None
         for idx, prior_toks in enumerate(kept_tokens):
-            if _jaccard(toks, prior_toks) >= _DEDUP_JACCARD:
+            if _jaccard(toks, prior_toks) >= threshold:
                 merged_into = idx
                 break
         if merged_into is None:
@@ -152,12 +159,14 @@ async def synthesize(
     additional LLM calls — everything we need is already in ``extracts``.
     """
     cfg = config or CurationConfig()
+    dedup_threshold = cfg.synthesizer_dedup_threshold
 
     # Principle dedup + cap + renumber.
     principles = _dedup_by_statement(
         list(extracts.principles),
         statement_attr="statement",
         citations_attr="source_chunk_ids",
+        threshold=dedup_threshold,
     )
     principles = _prioritise(
         principles, citation_key="source_chunk_ids", cap=cfg.max_principles
@@ -184,6 +193,7 @@ async def synthesize(
         list(extracts.knowledge),
         statement_attr="statement",
         citations_attr="citations",
+        threshold=dedup_threshold,
     )
     knowledge = _prioritise(
         knowledge, citation_key="citations", cap=cfg.max_knowledge_items
@@ -204,7 +214,7 @@ async def synthesize(
         deduped_anti.append(ap)
     anti_patterns = _renumber(list(deduped_anti), prefix="ANT")
 
-    return GoldenDocument(
+    golden = GoldenDocument(
         identity=extracts.identity,
         principles=principles,
         procedures=procedures,
@@ -213,3 +223,24 @@ async def synthesize(
         anti_patterns=anti_patterns,
         source_documents=list(extracts.source_documents),
     )
+
+    # Empty-input invariant: a GoldenDocument with no role *or* no
+    # principles/procedures/knowledge at all is useless to every downstream
+    # phase. Fail loudly so a misconfigured corpus does not silently produce
+    # a degenerate dataset.
+    if len(golden.identity.role) == 0 or (
+        len(golden.principles) == 0
+        and len(golden.procedures) == 0
+        and len(golden.knowledge) == 0
+    ):
+        raise EmptyBoKError(
+            "Synthesizer produced no extractable content: "
+            f"identity.role={golden.identity.role!r}, "
+            f"principles={len(golden.principles)}, "
+            f"procedures={len(golden.procedures)}, "
+            f"knowledge={len(golden.knowledge)}. "
+            "Check that the source corpus is non-empty and that the "
+            "extractor prompts / models are functioning."
+        )
+
+    return golden

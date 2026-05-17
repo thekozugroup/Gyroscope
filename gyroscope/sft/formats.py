@@ -1,7 +1,15 @@
-"""Serialise Trajectory objects to the common SFT row formats."""
+"""Serialise Trajectory objects to the common SFT row formats.
+
+The module exposes both the per-format ``to_*`` / ``from_*`` helpers and
+two registries — :data:`FORMAT_WRITERS` and :data:`FORMAT_READERS` — that
+the pipeline and eval writers dispatch through. New formats register
+themselves via :func:`register_format` so callers do not need to grow
+if/elif chains when a new output shape is added.
+"""
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from gyroscope.core.models import Trajectory, TrajectoryMessage
@@ -152,22 +160,6 @@ def to_alpaca(traj: Trajectory) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Dispatch helper used by the pipeline writer.
-# ---------------------------------------------------------------------------
-
-
-def render(traj: Trajectory, output_format: str) -> dict[str, Any]:
-    """Render a trajectory in the requested format."""
-    if output_format == "sharegpt":
-        return to_sharegpt(traj)
-    if output_format == "chatml":
-        return to_chatml(traj)
-    if output_format == "alpaca":
-        return to_alpaca(traj)
-    raise ValueError(f"Unknown output_format: {output_format!r}")
-
-
-# ---------------------------------------------------------------------------
 # Reverse parsers (used by the CLI report command to reload a written dataset).
 # ---------------------------------------------------------------------------
 
@@ -226,3 +218,62 @@ def from_chatml(row: dict[str, Any]) -> Trajectory:
         tags=dict(row.get("tags") or {}),
         quality_score=row.get("quality_score"),
     )
+
+
+# ---------------------------------------------------------------------------
+# Format registry. Dispatch happens through these dicts so adding a new
+# format means a single :func:`register_format` call rather than editing
+# every if/elif chain across the codebase.
+# ---------------------------------------------------------------------------
+
+
+FormatWriter = Callable[[Trajectory], dict[str, Any]]
+FormatReader = Callable[[dict[str, Any]], Trajectory]
+
+
+FORMAT_WRITERS: dict[str, FormatWriter] = {
+    "sharegpt": to_sharegpt,
+    "chatml": to_chatml,
+    "alpaca": to_alpaca,
+}
+
+FORMAT_READERS: dict[str, FormatReader] = {
+    "sharegpt": from_sharegpt,
+    "chatml": from_chatml,
+    # alpaca is lossy (multi-turn is collapsed); no reader.
+}
+
+
+def register_format(
+    name: str,
+    writer: FormatWriter,
+    reader: FormatReader | None = None,
+) -> None:
+    """Register a new SFT output format.
+
+    ``name`` is the string passed to :func:`render` and to
+    ``SFTConfig.output_format``-style call sites. ``writer`` turns a
+    Trajectory into a row dict. ``reader`` is optional — omit it for lossy
+    formats where a Trajectory cannot be reconstructed (Alpaca is the
+    canonical example). Registering an existing ``name`` overwrites the
+    previous binding so callers can monkeypatch a format in tests.
+    """
+    FORMAT_WRITERS[name] = writer
+    if reader is not None:
+        FORMAT_READERS[name] = reader
+
+
+def render(traj: Trajectory, output_format: str) -> dict[str, Any]:
+    """Render a trajectory in the requested format.
+
+    Dispatches through :data:`FORMAT_WRITERS` so any format registered via
+    :func:`register_format` is automatically supported here too.
+    """
+    try:
+        writer = FORMAT_WRITERS[output_format]
+    except KeyError as exc:
+        raise ValueError(
+            f"Unknown output_format: {output_format!r}. "
+            f"Registered formats: {sorted(FORMAT_WRITERS)}"
+        ) from exc
+    return writer(traj)

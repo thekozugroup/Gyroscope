@@ -52,6 +52,18 @@ IDENTITY_REPRESENTATIVE_N = 12
 
 
 # ---------------------------------------------------------------------------
+# Per-call telemetry. ``extract_procedures`` updates this on every call (NOT
+# cumulative) so the curation pipeline can read it for its run report
+# without us having to plumb a return tuple through the extractor signature.
+# ---------------------------------------------------------------------------
+
+last_dropped_procedures_count: int = 0
+"""Number of procedures dropped by the most recent ``extract_procedures``
+call because they parsed with zero valid steps. Reset at the start of each
+call — read it immediately after the await."""
+
+
+# ---------------------------------------------------------------------------
 # Prompt assembly
 # ---------------------------------------------------------------------------
 
@@ -356,6 +368,12 @@ async def extract_procedures(
     *,
     batch_size: int = DEFAULT_BATCH_SIZE,
 ) -> list[Procedure]:
+    # Reset the per-call counter at the start of every invocation so callers
+    # can read it immediately after the await without seeing stale state
+    # from a previous call.
+    global last_dropped_procedures_count
+    last_dropped_procedures_count = 0
+
     known = {c.id for c in chunks}
     raw = await _run_batched_array(
         chunks=chunks,
@@ -372,6 +390,7 @@ async def extract_procedures(
     _assign_ids("PRC", raw)
 
     out: list[Procedure] = []
+    dropped = 0
     for item in raw:
         try:
             steps_payload = item.get("steps") or []
@@ -388,6 +407,7 @@ async def extract_procedures(
                     )
                 )
             if not steps:
+                dropped += 1
                 continue
             out.append(
                 Procedure(
@@ -402,6 +422,7 @@ async def extract_procedures(
             )
         except (ValidationError, ValueError, TypeError) as exc:
             logger.warning("Skipping malformed procedure %s: %s", item.get("id"), exc)
+    last_dropped_procedures_count = dropped
     return out
 
 

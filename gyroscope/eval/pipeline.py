@@ -36,11 +36,22 @@ def leakage_check(train: list[Trajectory], eval_: list[Trajectory]) -> set[str]:
 
 
 class EvalPipeline:
-    """Writes eval JSONL and verifies leakage. Format mirrors the SFT writer."""
+    """Writes eval JSONL and verifies leakage. Format mirrors the SFT writer.
+
+    The constructor and writer both read :data:`gyroscope.sft.formats.
+    FORMAT_WRITERS` so any format registered via :func:`gyroscope.sft.
+    formats.register_format` works here without code changes.
+    """
 
     def __init__(self, output_format: str = "sharegpt") -> None:
-        if output_format not in {"sharegpt", "chatml", "alpaca"}:
-            raise ValueError(f"Unsupported format: {output_format}")
+        # Lazy import to avoid a hard dep on sft.formats during partial installs.
+        from gyroscope.sft.formats import FORMAT_WRITERS
+
+        if output_format not in FORMAT_WRITERS:
+            raise ValueError(
+                f"Unsupported format: {output_format!r}. "
+                f"Registered formats: {sorted(FORMAT_WRITERS)}"
+            )
         self.output_format = output_format
 
     def write(
@@ -51,11 +62,11 @@ class EvalPipeline:
         *,
         strict: bool = True,
     ) -> Path:
-        # Lazy import to avoid a hard dep on sft.formats during partial installs.
-        from gyroscope.sft.formats import to_alpaca, to_chatml, to_sharegpt
+        # Lazy import keeps this consistent with the constructor and avoids
+        # pulling sft.formats at import time.
+        from gyroscope.sft.formats import FORMAT_WRITERS
 
-        writers = {"sharegpt": to_sharegpt, "chatml": to_chatml, "alpaca": to_alpaca}
-        writer = writers[self.output_format]
+        writer = FORMAT_WRITERS[self.output_format]
 
         leaked = leakage_check(train_trajectories, eval_trajectories)
         if leaked:

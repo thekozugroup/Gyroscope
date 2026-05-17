@@ -129,7 +129,15 @@ async def test_synthesize_merges_vocabulary_aliases():
         VocabularyTerm(term="QS", definition="Quantity Surveyor", aliases=["surveyor"]),
         VocabularyTerm(term="qs", definition="Quantity Surveyor (duplicate)", aliases=["measurer"]),
     ]
-    extracts = _make_extracts(vocabulary=vocab)
+    # Vocabulary-only corpora trip the empty-BoK invariant (no principle /
+    # procedure / knowledge has anything to ground), so pair the vocab with
+    # one principle just to keep this test focused on the vocab merge logic.
+    extracts = _make_extracts(
+        principles=[
+            Principle(id="PRN-X", statement="One rule.", source_chunk_ids=["c1"]),
+        ],
+        vocabulary=vocab,
+    )
     golden = await synthesize(extracts, client=None, config=CurationConfig())
     assert len(golden.vocabulary) == 1
     survivor = golden.vocabulary[0]
