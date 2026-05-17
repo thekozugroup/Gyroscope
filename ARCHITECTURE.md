@@ -73,9 +73,19 @@ gyroscope/
 │   └── pipeline.py
 ├── eval/                 # held-out eval set generator
 │   └── pipeline.py
+├── quality/              # deterministic 0..100 axis graders + report renderers
+│   ├── metrics.py
+│   └── report.py
+├── runner.py             # AutonomousRunner: end-to-end loop + per-axis retry
 ├── cli.py                # `gyroscope` CLI entry point (typer)
 └── __init__.py
 ```
+
+The `AutonomousRunner` (`gyroscope/runner.py`) wires the four phase pipelines
+together, grades the output via `gyroscope.quality`, and re-runs only the
+phase whose axis failed (coverage / faithfulness → curation, diversity /
+trainability → SFT, reward_soundness → rewards) until every axis crosses the
+configured threshold or the iteration budget is exhausted.
 
 ---
 

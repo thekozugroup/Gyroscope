@@ -146,16 +146,17 @@ def _renumber(items: list, *, prefix: str) -> list:
 
 async def synthesize(
     extracts: ExtractorOutputs,
-    client: LLMClient,
     *,
+    client: LLMClient | None = None,
     config: CurationConfig | None = None,
 ) -> GoldenDocument:
     """Merge extractor outputs into a coherent GoldenDocument.
 
-    ``client`` is accepted for API symmetry / future use (it is part of the
-    documented signature) but the current implementation merges without
-    additional LLM calls — everything we need is already in ``extracts``.
+    ``client`` is accepted as an optional keyword for forward compatibility
+    with future LLM-driven merging strategies; the current implementation
+    is purely deterministic and never calls it.
     """
+    del client  # not yet used; kept for future LLM-rerank hooks
     cfg = config or CurationConfig()
     dedup_threshold = cfg.synthesizer_dedup_threshold
 

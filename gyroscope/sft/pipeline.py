@@ -52,7 +52,7 @@ class SFTPipeline:
         # ``strict=False`` keeps existing call sites green: leakage emits a
         # warning rather than aborting the SFT run.
         eval_pipeline = EvalPipeline(output_format=config.output_format)
-        eval_path = eval_pipeline.write(evals, train, out_dir, strict=False)
+        eval_path = eval_pipeline.write(evals, train, out_dir, strict=config.eval_strict)
 
         logger.info(
             "wrote %d train rows to %s and %d eval rows to %s",

@@ -342,12 +342,6 @@ class LLMClient:
             logger.warning("complete_json_array failed to parse model output; returning default.")
             return default if default is not None else []
 
-    # ---------- convenience: bounded parallel map ----------
-
-    async def gather(self, coros: list[Any]) -> list[Any]:
-        """Run coroutines with the client's semaphore already bounding concurrency."""
-        return await asyncio.gather(*coros)
-
 
 # ---------------------------------------------------------------------------
 # Prompt-cache observability — fully best-effort, never raises.

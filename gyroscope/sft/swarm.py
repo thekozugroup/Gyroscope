@@ -140,9 +140,16 @@ async def run_swarm(
       5. Semantic dedup over `prompt_seed + first_user_message`.
       6. Drop trajectories below the critic threshold (with repair attempts already spent).
     """
-    personas = await generate_personas(golden, client, config.n_personas)
+    personas = await generate_personas(
+        golden, client, config.n_personas, temperature=config.temperature_persona
+    )
     scenarios = await generate_scenarios(
-        golden, personas, client, config.n_trajectories, config.difficulty_mix
+        golden,
+        personas,
+        client,
+        config.n_trajectories,
+        config.difficulty_mix,
+        temperature=config.temperature_scenario,
     )
     if not scenarios:
         return [], []

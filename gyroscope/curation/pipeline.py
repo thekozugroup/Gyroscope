@@ -96,7 +96,7 @@ class CurationPipeline:
         )
 
         logger.info("Synthesizing GoldenDocument")
-        golden = await synthesize(extracts, client, config=curation_cfg)
+        golden = await synthesize(extracts, client=client, config=curation_cfg)
 
         self._write_outputs(golden)
         return golden

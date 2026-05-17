@@ -112,6 +112,8 @@ async def generate_personas(
     golden: GoldenDocument,
     client: LLMClient,
     n: int,
+    *,
+    temperature: float = 0.7,
 ) -> list[Persona]:
     """Generate `n` distinct personas seeded from the golden document's identity."""
     if n <= 0:
@@ -123,7 +125,7 @@ async def generate_personas(
             system=_PERSONA_SYSTEM,
             user=user_prompt,
             cache_system=True,
-            temperature=0.7,
+            temperature=temperature,
         )
     except Exception as exc:
         logger.warning("Persona LLM call failed (%s); using deterministic fallback.", exc)

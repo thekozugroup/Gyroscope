@@ -135,7 +135,7 @@ def sft(
     from gyroscope.sft.pipeline import SFTPipeline
 
     cfg = _load_config(run)
-    if n_trajectories:
+    if n_trajectories is not None:
         cfg.sft.n_trajectories = n_trajectories
     golden = _read_golden(run)
 
@@ -160,7 +160,7 @@ def rewards(
     from gyroscope.rewards.pipeline import RewardsPipeline
 
     cfg = _load_config(run)
-    if budget:
+    if budget is not None:
         cfg.rewards.reward_budget = budget
     golden = _read_golden(run)
 

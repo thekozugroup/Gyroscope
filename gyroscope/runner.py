@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
+from typing import Any
 
 from gyroscope.core.config import GyroscopeConfig
 from gyroscope.core.io import write_jsonl
@@ -44,6 +45,8 @@ class IterationResult:
     iteration: int
     report: QualityReport
     phases_re_run: list[str] = field(default_factory=list)
+    config_snapshot: dict[str, Any] = field(default_factory=dict)
+    """Snapshot of the mutable knobs that produced this iteration's artefacts."""
 
 
 @dataclass
@@ -78,14 +81,12 @@ class AutonomousRunner:
         return docs
 
     async def _phase_curate(self, documents: list[Document], client: LLMClient) -> GoldenDocument:
+        # CurationPipeline.distill is the single writer for golden.{md,json};
+        # see CurationPipeline._write_outputs. We do not duplicate the write
+        # here so the two paths cannot drift in serialisation format.
         from gyroscope.curation.pipeline import CurationPipeline
 
-        golden = await CurationPipeline(self.config).distill(documents, client)
-        (self.config.output_dir / "golden.md").write_text(golden.to_markdown(), encoding="utf-8")
-        (self.config.output_dir / "golden.json").write_text(
-            golden.model_dump_json(indent=2), encoding="utf-8"
-        )
-        return golden
+        return await CurationPipeline(self.config).distill(documents, client)
 
     async def _phase_sft(
         self, golden: GoldenDocument, client: LLMClient
@@ -103,7 +104,9 @@ class AutonomousRunner:
         # (strict=False so leakage warns rather than aborts, matching SFT
         # pipeline semantics and keeping iteration-loop tests green).
         write_jsonl(out_dir / "sft.jsonl", (render(t, fmt) for t in train))
-        EvalPipeline(output_format=fmt).write(eval_, train, out_dir, strict=False)
+        EvalPipeline(output_format=fmt).write(
+            eval_, train, out_dir, strict=self.config.sft.eval_strict
+        )
         return train, eval_
 
     async def _phase_rewards(self, golden: GoldenDocument, client: LLMClient) -> list[RewardSpec]:
@@ -173,7 +176,9 @@ class AutonomousRunner:
                 documents=documents, golden=golden, train=train, eval=eval_, rewards=rewards
             )
             report = self._grade(art)
-            self.history.append(IterationResult(iteration=0, report=report))
+            self.history.append(
+                IterationResult(iteration=0, report=report, config_snapshot=self._config_snapshot())
+            )
             logger.info("Iteration 0 overall: %.1f", report.overall())
 
             for it in range(1, self.max_iterations + 1):
@@ -192,12 +197,41 @@ class AutonomousRunner:
                     art.rewards = await self._phase_rewards(art.golden, client)
                 report = self._grade(art)
                 self.history.append(
-                    IterationResult(iteration=it, report=report, phases_re_run=phases)
+                    IterationResult(
+                        iteration=it,
+                        report=report,
+                        phases_re_run=phases,
+                        config_snapshot=self._config_snapshot(),
+                    )
                 )
                 logger.info("Iteration %d overall: %.1f", it, report.overall())
 
         self._write_report(report)
         return art
+
+    def _config_snapshot(self) -> dict[str, Any]:
+        """Snapshot the knobs the retry loop mutates so each iteration's
+        artefacts can be traced back to the exact config that produced them."""
+        c = self.config
+        return {
+            "curation": {
+                "max_principles": c.curation.max_principles,
+                "max_procedures": c.curation.max_procedures,
+                "max_knowledge_items": c.curation.max_knowledge_items,
+                "dedup_threshold": c.curation.dedup_threshold,
+                "synthesizer_dedup_threshold": c.curation.synthesizer_dedup_threshold,
+            },
+            "sft": {
+                "n_personas": c.sft.n_personas,
+                "critic_min_score": c.sft.critic_min_score,
+                "n_trajectories": c.sft.n_trajectories,
+            },
+            "rewards": {"reward_budget": c.rewards.reward_budget},
+            "llm": {
+                "temperature_swarm": c.llm.temperature_swarm,
+                "temperature_critic": c.llm.temperature_critic,
+            },
+        }
 
     def _write_report(self, report: QualityReport) -> None:
         run = self.config.output_dir
@@ -211,6 +245,7 @@ class AutonomousRunner:
                 "overall": h.report.overall(),
                 "phases_re_run": h.phases_re_run,
                 "axes": {k: v.score for k, v in h.report.axes.items()},
+                "config": h.config_snapshot,
             }
             for h in self.history
         ]

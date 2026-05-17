@@ -143,3 +143,120 @@ def test_report_subcommand_round_trips_through_from_sharegpt(tmp_path: Path) -> 
     payload = json.loads((run / "report.json").read_text(encoding="utf-8"))
     assert "axes" in payload and isinstance(payload["axes"], dict)
     assert payload["axes"], "report.json should have at least one axis"
+
+
+def test_run_subcommand_drives_autonomous_runner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`gyroscope run` constructs an AutonomousRunner, executes it, and
+    surfaces the iteration table + exit code from the resulting report."""
+    import gyroscope.runner as runner_mod
+
+    captured: dict[str, object] = {}
+
+    class _FakeRunner:
+        def __init__(self, cfg, *, threshold: float, max_iterations: int) -> None:
+            captured["cfg_threshold"] = threshold
+            captured["cfg_max_iter"] = max_iterations
+            captured["input_paths"] = list(cfg.input_paths)
+            captured["output_dir"] = cfg.output_dir
+            captured["n_trajectories"] = cfg.sft.n_trajectories
+            captured["reward_budget"] = cfg.rewards.reward_budget
+            from gyroscope.quality.metrics import AxisScore, QualityReport
+
+            r = QualityReport()
+            for axis in (
+                "coverage",
+                "faithfulness",
+                "diversity",
+                "trainability",
+                "reward_soundness",
+            ):
+                r.add(AxisScore(axis, 99.0))
+            self.history = [runner_mod.IterationResult(iteration=0, report=r, config_snapshot={})]
+
+        async def run(self) -> object:
+            (captured["output_dir"] / "history.json").write_text("[]", encoding="utf-8")  # type: ignore[union-attr]
+            return object()
+
+    monkeypatch.setattr(runner_mod, "AutonomousRunner", _FakeRunner)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--input",
+            str(tmp_path / "fake-input"),
+            "--output",
+            str(tmp_path / "out"),
+            "--n-trajectories",
+            "3",
+            "--reward-budget",
+            "5",
+            "--threshold",
+            "90",
+            "--max-iterations",
+            "1",
+        ],
+    )
+
+    assert result.exit_code == 0, (
+        f"run exited {result.exit_code}; stdout:\n{result.stdout}\nexc: {result.exception!r}"
+    )
+    assert captured["cfg_threshold"] == 90.0
+    assert captured["cfg_max_iter"] == 1
+    assert captured["n_trajectories"] == 3
+    assert captured["reward_budget"] == 5
+    assert (tmp_path / "out" / "config.json").exists()
+    assert (tmp_path / "out" / "history.json").exists()
+
+
+def test_run_subcommand_exits_nonzero_when_axes_fail(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When the final report does not cross --threshold, `run` must exit 1."""
+    import gyroscope.runner as runner_mod
+
+    class _FailingRunner:
+        def __init__(self, cfg, *, threshold: float, max_iterations: int) -> None:
+            from gyroscope.quality.metrics import AxisScore, QualityReport
+
+            self._out = cfg.output_dir
+            r = QualityReport()
+            for axis in (
+                "coverage",
+                "faithfulness",
+                "diversity",
+                "trainability",
+                "reward_soundness",
+            ):
+                r.add(AxisScore(axis, 50.0))
+            self.history = [runner_mod.IterationResult(iteration=0, report=r, config_snapshot={})]
+
+        async def run(self) -> object:
+            self._out.mkdir(parents=True, exist_ok=True)
+            (self._out / "history.json").write_text("[]", encoding="utf-8")
+            return object()
+
+    monkeypatch.setattr(runner_mod, "AutonomousRunner", _FailingRunner)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--input",
+            str(tmp_path / "x"),
+            "--output",
+            str(tmp_path / "out"),
+            "--threshold",
+            "95",
+            "--max-iterations",
+            "0",
+        ],
+    )
+
+    assert result.exit_code == 1, (
+        f"expected exit 1 on failing axes; got {result.exit_code}; stdout:\n{result.stdout}"
+    )

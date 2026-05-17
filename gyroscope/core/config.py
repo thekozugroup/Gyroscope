@@ -77,6 +77,15 @@ class SFTConfig(BaseModel):
     temperature_assistant: float = 0.7
     temperature_user_sim: float = 0.8
     temperature_critic: float = 0.0
+    temperature_scenario: float = 0.8
+    """Sampling temperature for the scenario-prompt generator."""
+    temperature_persona: float = 0.7
+    """Sampling temperature for the persona generator."""
+
+    eval_strict: bool = False
+    """When True, the eval writer raises on any procedure-id leakage between
+    train and eval. When False (default), leakage emits a warning so a single
+    overlap does not abort a long run."""
 
 
 class RewardConfig(BaseModel):

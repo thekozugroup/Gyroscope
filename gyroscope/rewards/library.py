@@ -26,7 +26,7 @@ from typing import Any
 try:  # ``jsonschema`` is a runtime dependency, but soft-import for robustness.
     import jsonschema
 except Exception:  # pragma: no cover - exercised only when dep is missing
-    jsonschema = None 
+    jsonschema = None
 
 logger = logging.getLogger(__name__)
 
