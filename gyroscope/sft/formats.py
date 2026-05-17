@@ -13,6 +13,7 @@ _SHAREGPT_ROLE: dict[str, str] = {
     "assistant": "gpt",
     "tool": "tool",
 }
+_SHAREGPT_ROLE_INVERSE: dict[str, str] = {v: k for k, v in _SHAREGPT_ROLE.items()}
 
 
 def _ensure_system_first(messages: list[TrajectoryMessage], system: str) -> list[TrajectoryMessage]:
@@ -164,3 +165,64 @@ def render(traj: Trajectory, output_format: str) -> dict[str, Any]:
     if output_format == "alpaca":
         return to_alpaca(traj)
     raise ValueError(f"Unknown output_format: {output_format!r}")
+
+
+# ---------------------------------------------------------------------------
+# Reverse parsers (used by the CLI report command to reload a written dataset).
+# ---------------------------------------------------------------------------
+
+
+def from_sharegpt(row: dict[str, Any]) -> Trajectory:
+    """Parse a ShareGPT row back into a Trajectory.
+
+    The system message is hoisted into Trajectory.system; remaining messages
+    are returned in order. Unknown shareGPT roles raise.
+    """
+    conversations = row.get("conversations") or []
+    system = ""
+    messages: list[TrajectoryMessage] = []
+    for entry in conversations:
+        sg_role = entry.get("from", "")
+        if sg_role not in _SHAREGPT_ROLE_INVERSE:
+            raise ValueError(f"Unknown sharegpt role: {sg_role!r}")
+        role = _SHAREGPT_ROLE_INVERSE[sg_role]
+        content = entry.get("value", "")
+        if role == "system" and not system:
+            system = content
+            continue
+        msg = TrajectoryMessage(role=role, content=content, name=entry.get("name"))
+        messages.append(msg)
+
+    return Trajectory(
+        id=row.get("id", "TRJ-unknown"),
+        scenario_id=row.get("scenario_id", "SCN-unknown"),
+        system=system,
+        messages=messages,
+        tags=dict(row.get("tags") or {}),
+        quality_score=row.get("quality_score"),
+    )
+
+
+def from_chatml(row: dict[str, Any]) -> Trajectory:
+    """Parse a ChatML row back into a Trajectory."""
+    raw_messages = row.get("messages") or []
+    system = ""
+    messages: list[TrajectoryMessage] = []
+    for entry in raw_messages:
+        role = entry.get("role", "")
+        content = entry.get("content", "")
+        if role == "system" and not system:
+            system = content
+            continue
+        if role not in {"system", "user", "assistant", "tool"}:
+            raise ValueError(f"Unknown chatml role: {role!r}")
+        messages.append(TrajectoryMessage(role=role, content=content, name=entry.get("name")))
+
+    return Trajectory(
+        id=row.get("id", "TRJ-unknown"),
+        scenario_id=row.get("scenario_id", "SCN-unknown"),
+        system=system,
+        messages=messages,
+        tags=dict(row.get("tags") or {}),
+        quality_score=row.get("quality_score"),
+    )

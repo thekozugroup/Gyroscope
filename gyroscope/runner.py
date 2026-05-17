@@ -82,7 +82,7 @@ class AutonomousRunner:
     ) -> GoldenDocument:
         from gyroscope.curation.pipeline import CurationPipeline
 
-        golden = await CurationPipeline(self.config.curation).distill(documents, client)
+        golden = await CurationPipeline(self.config).distill(documents, client)
         (self.config.output_dir / "golden.md").write_text(
             golden.to_markdown(), encoding="utf-8"
         )
@@ -94,17 +94,15 @@ class AutonomousRunner:
     async def _phase_sft(
         self, golden: GoldenDocument, client: LLMClient
     ) -> tuple[list[Trajectory], list[Trajectory]]:
+        from gyroscope.sft.formats import render
         from gyroscope.sft.swarm import run_swarm
 
         train, eval_ = await run_swarm(golden, client, self.config.sft)
-        from gyroscope.sft.pipeline import SFTPipeline
-
-        SFTPipeline().write(
-            train=train,
-            eval_=eval_,
-            output_dir=self.config.output_dir,
-            output_format=self.config.sft.output_format,
-        )
+        out_dir = self.config.output_dir
+        out_dir.mkdir(parents=True, exist_ok=True)
+        fmt = self.config.sft.output_format
+        write_jsonl(out_dir / "sft.jsonl", (render(t, fmt) for t in train))
+        write_jsonl(out_dir / "eval.jsonl", (render(t, fmt) for t in eval_))
         return train, eval_
 
     async def _phase_rewards(

@@ -116,7 +116,7 @@ def curate(
 
     async def _go() -> GoldenDocument:
         async with LLMClient(cfg) as client:
-            return await CurationPipeline(cfg.curation).distill(docs, client)
+            return await CurationPipeline(cfg).distill(docs, client)
 
     golden = asyncio.run(_go())
     _write_golden(golden, run)
