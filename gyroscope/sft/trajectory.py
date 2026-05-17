@@ -72,6 +72,9 @@ def _selected_procedure(golden: GoldenDocument, scenario: Scenario) -> Procedure
     return None
 
 
+_PREFIX_CACHE: dict[int, str] = {}
+
+
 def build_stable_system_prefix(golden: GoldenDocument) -> str:
     """Construct the assistant's *scenario-independent* system prefix.
 
@@ -80,7 +83,16 @@ def build_stable_system_prefix(golden: GoldenDocument) -> str:
     call in a run. Per-scenario selections (selected principles / procedure)
     are NOT included here — they go in the user turn via
     :func:`build_scenario_suffix`.
+
+    The result is memoized keyed by ``id(golden)`` — a run that builds N
+    trajectories sharing the same golden document pays the concatenation
+    cost ONCE and every worker hands the same immutable string object to
+    the Anthropic client (preserves prompt-cache reuse, avoids N copies
+    in scheduler memory).
     """
+    cached = _PREFIX_CACHE.get(id(golden))
+    if cached is not None:
+        return cached
     parts: list[str] = []
     parts.append(f"# Identity\nYou are: {golden.identity.role}.")
     parts.append(golden.identity.description)
@@ -125,7 +137,9 @@ def build_stable_system_prefix(golden: GoldenDocument) -> str:
         "- Do not invent facts; if unknown, say so.\n"
         "- Ask a clarifying question only when essential."
     )
-    return "\n".join(parts)
+    result = "\n".join(parts)
+    _PREFIX_CACHE[id(golden)] = result
+    return result
 
 
 def build_scenario_suffix(scenario: Scenario, golden: GoldenDocument) -> str:
@@ -568,6 +582,8 @@ async def build_trajectory(
     # scenario that shares ``golden``; the per-scenario focus block is folded
     # into the first user message so the system prompt stays byte-identical
     # and Anthropic prompt caching can serve every assistant/critic call.
+    # ``build_stable_system_prefix`` is memoized by golden identity so calling
+    # it once per trajectory is O(1) after the first run-wide call.
     stable_prefix = build_stable_system_prefix(golden)
     scenario_suffix = build_scenario_suffix(effective_scenario, golden)
     persona = _persona_lookup(personas, scenario.persona_id)

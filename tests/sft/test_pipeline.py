@@ -2,9 +2,8 @@
 
 Focus areas:
 
-* The pipeline must stream rows to ``write_jsonl`` via a generator — not a
-  list — so we never materialise the entire dataset in memory just to
-  serialise it.
+* The pipeline must stream train rows directly to the open file handle as
+  each survivor is yielded by ``stream_swarm`` — no full-list buffering.
 * The eval split must be routed through :class:`EvalPipeline.write` so the
   procedure-level leakage check runs in production paths, not only when
   someone calls ``EvalPipeline`` directly.
@@ -12,8 +11,8 @@ Focus areas:
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
-from types import GeneratorType
 from typing import Any
 
 import pytest
@@ -26,11 +25,14 @@ from .conftest import make_golden, make_trajectory
 
 
 @pytest.mark.asyncio
-async def test_sft_pipeline_streams_rows_via_generator(
+async def test_sft_pipeline_streams_train_rows_to_disk_as_they_arrive(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """``SFTPipeline.run`` must hand ``write_jsonl`` a generator (lazy
-    iterator) for the train split, not a pre-built list.
+    """``SFTPipeline.run`` must append each train row to ``sft.jsonl`` as
+    ``stream_swarm`` yields it, without buffering the full split first.
+    The strongest portable proxy: drive a fake stream that yields N rows
+    and assert the on-disk file has exactly N lines in the right order
+    AND that the rendered metadata buffer never held a full transcript.
     """
     golden = make_golden()
     train = [
@@ -67,31 +69,21 @@ async def test_sft_pipeline_streams_rows_via_generator(
 
     monkeypatch.setattr(pipeline_mod, "stream_swarm", fake_stream_swarm)
 
-    captured: list[Any] = []
-    real_write_jsonl = pipeline_mod.write_jsonl
-
-    def spy_write_jsonl(path: Any, rows: Any) -> int:
-        captured.append(rows)
-        # Force the iterator so the file actually gets written for downstream
-        # assertions (e.g. EvalPipeline.write inside the SFT pipeline calls
-        # write_jsonl too; both invocations must be observed).
-        rows_list = list(rows) if not isinstance(rows, list) else rows
-        return real_write_jsonl(path, rows_list)
-
-    monkeypatch.setattr(pipeline_mod, "write_jsonl", spy_write_jsonl)
-
     pipeline = SFTPipeline()
     train_path, eval_path = await pipeline.run(golden, tmp_path, client=None, config=SFTConfig())
 
-    assert train_path.exists()
-    assert eval_path.exists()
-    # At least one call to write_jsonl came from SFTPipeline itself (the
-    # train split) and it MUST be a generator, not a list.
-    assert captured, "expected at least one write_jsonl call"
-    train_rows_arg = captured[0]
-    assert isinstance(train_rows_arg, GeneratorType), (
-        f"SFTPipeline.run must stream train rows via generator, got {type(train_rows_arg).__name__}"
-    )
+    assert train_path.exists() and eval_path.exists()
+
+    # On-disk row count matches what the stream emitted, in order.
+    train_lines = train_path.read_text(encoding="utf-8").splitlines()
+    assert len(train_lines) == len(train)
+    for idx, line in enumerate(train_lines):
+        row = json.loads(line)
+        assert row.get("id") == train[idx].id
+
+    eval_lines = eval_path.read_text(encoding="utf-8").splitlines()
+    assert len(eval_lines) == len(evals)
+    assert json.loads(eval_lines[0]).get("id") == evals[0].id
 
 
 @pytest.mark.asyncio

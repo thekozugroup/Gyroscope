@@ -1,20 +1,23 @@
 """High-level pipeline that writes `sft.jsonl` and `eval.jsonl` to disk.
 
 The pipeline streams surviving train trajectories straight to disk via
-:func:`stream_swarm` rather than buffering the full dataset. The eval split is
-small (procedure-disjoint hold-out) so we keep it in memory in order to run
-the leakage check + :class:`EvalPipeline.write` flow unchanged.
+:func:`stream_swarm`. Each row is rendered and appended to the open
+``sft.jsonl`` handle as the worker pool produces it, so peak resident
+state for the train split stays at ``O(max_concurrent)`` — no full-list
+buffering. The eval split is small (procedure-disjoint hold-out) so we
+keep it in memory in order to run the leakage check + :class:`EvalPipeline.write`
+flow unchanged.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 from collections import Counter
 from collections.abc import Iterable
 from pathlib import Path
 
 from gyroscope.core.config import SFTConfig
-from gyroscope.core.io import write_jsonl
 from gyroscope.core.llm import LLMClient
 from gyroscope.core.models import GoldenDocument, Trajectory
 from gyroscope.eval.pipeline import EvalPipeline
@@ -48,36 +51,41 @@ class SFTPipeline:
 
         train_path = out_dir / "sft.jsonl"
 
-        train_buffer: list[Trajectory] = []
+        # Keep a small list of train trajectory metadata for the leakage check
+        # against eval (the procedure-disjoint guarantee — only tags +
+        # scenario_id are needed). Full train trajectories are streamed straight
+        # to disk and never held resident.
+        train_meta: list[Trajectory] = []
+        train_tags_counter: Counter[str] = Counter()
+        train_procs_counter: Counter[str] = Counter()
         evals: list[Trajectory] = []
+        n_train = 0
 
-        async def _stream() -> None:
+        # Open the sink once, append each rendered row as the worker pool
+        # yields a survivor. Peak resident trajectories stays O(max_concurrent)
+        # rather than O(n_train).
+        with train_path.open("w", encoding="utf-8") as fh:
             async for traj, split in stream_swarm(golden, client, config):
                 if split == "train":
-                    train_buffer.append(traj)
+                    fh.write(json.dumps(render(traj, config.output_format), ensure_ascii=False))
+                    fh.write("\n")
+                    n_train += 1
+                    # Track only the lightweight bookkeeping we need afterwards.
+                    train_meta.append(_strip_to_metadata(traj))
+                    train_tags_counter[str(traj.tags.get("difficulty", "unknown"))] += 1
+                    for pid in traj.tags.get("procedure_ids", []) or ["(none)"]:
+                        train_procs_counter[str(pid)] += 1
                 else:
                     evals.append(traj)
 
-        # ``write_jsonl`` is sync and pulls rows synchronously, so we drain the
-        # async stream into a small handoff buffer first then hand a lazy
-        # generator (NOT a list) to the writer. Memory stays O(survivors) per
-        # split — the workers already cap concurrency upstream.
-        await _stream()
-
-        n_train = write_jsonl(
-            train_path,
-            (render(t, config.output_format) for t in train_buffer),
-        )
-
-        self._log_distribution("train", train_buffer)
+        self._log_counter("train", "difficulty", train_tags_counter, n_train)
+        self._log_counter("train", "procedure", train_procs_counter, n_train)
         self._log_distribution("eval", evals)
 
         # Route the eval split through EvalPipeline so the procedure-level
         # leakage check actually runs in production (not just unit tests).
-        # ``strict=False`` keeps existing call sites green: leakage emits a
-        # warning rather than aborting the SFT run.
         eval_pipeline = EvalPipeline(output_format=config.output_format)
-        eval_path = eval_pipeline.write(evals, train_buffer, out_dir, strict=config.eval_strict)
+        eval_path = eval_pipeline.write(evals, train_meta, out_dir, strict=config.eval_strict)
 
         logger.info(
             "wrote %d train rows to %s and %d eval rows to %s",
@@ -111,6 +119,20 @@ class SFTPipeline:
             label,
             dict(sorted(by_procedure.items())),
         )
+
+    @staticmethod
+    def _log_counter(split_label: str, axis: str, counts: Counter[str], total: int) -> None:
+        if total == 0:
+            logger.info("%s split is empty", split_label)
+            return
+        logger.info("%s %s distribution: %s", split_label, axis, dict(sorted(counts.items())))
+
+
+def _strip_to_metadata(traj: Trajectory) -> Trajectory:
+    """Return a Trajectory carrying only the tags/scenario_id the leakage
+    check needs. We zero out the message list so we don't keep multi-KB
+    transcripts resident just to detect procedure overlap."""
+    return traj.model_copy(update={"messages": [], "system": ""})
 
 
 __all__ = ["SFTPipeline"]

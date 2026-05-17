@@ -354,6 +354,13 @@ async def stream_swarm(
     eval_scenarios = [s for s in scenarios if s.procedure_id in eval_procs]
     scenario_index: dict[str, Scenario] = {s.id: s for s in scenarios}
 
+    # Prime the build_stable_system_prefix cache once so every worker hands
+    # the same memoized string to the Anthropic client (cache-friendly +
+    # avoids per-trajectory string concatenation).
+    from gyroscope.sft.trajectory import build_stable_system_prefix
+
+    build_stable_system_prefix(golden)
+
     train_yielded = 0
     async for item in _drain_split_concurrently(
         train_scenarios,

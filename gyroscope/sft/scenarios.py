@@ -205,34 +205,65 @@ async def generate_scenarios(
     anchors = _round_robin_anchors(_build_anchors(golden), n_total)
     proc_by_id = {p.id: p for p in golden.procedures}
 
-    # Fan out scenario generation in parallel. The LLMClient semaphore (sized
-    # by ``LLMConfig.max_concurrent``) caps in-flight calls, so we don't need
-    # an extra bound here. Sequential ``await`` previously left the semaphore
-    # idle for almost the entire run — a 5000-scenario job that should take
-    # minutes was taking hours.
-    coros: list[Any] = []
+    # Build the per-index spec list, then drive it through a bounded worker
+    # pool. The previous implementation submitted N coroutines to
+    # ``asyncio.gather`` upfront — for N = 10_000 that's 10k pinned Task
+    # objects each holding a closure over the persona list + golden doc.
+    # The worker-pool form caps peak Task count at ``max_concurrent``.
+    specs: list[tuple[int, _Difficulty, Procedure | None, list[str], Persona]] = []
     for i in range(n_total):
         difficulty = difficulty_pool[i] if i < len(difficulty_pool) else "medium"
         anchor_pid, principle_ids = anchors[i]
         procedure = proc_by_id.get(anchor_pid) if anchor_pid else None
         persona = personas[i % len(personas)]
-        coros.append(
-            _generate_one_scenario(
-                index=i + 1,
-                golden=golden,
-                persona=persona,
-                difficulty=difficulty,
-                procedure=procedure,
-                principle_ids=principle_ids,
-                client=client,
-                temperature=temperature,
-            )
-        )
-    # ``asyncio.gather`` preserves the input order of results, so the output
-    # list is already in scenario-index order. Tests and downstream code rely
-    # on ``scenarios[0].id == "SCN-0001"`` etc.
-    scenarios: list[Scenario] = list(await asyncio.gather(*coros))
-    return scenarios
+        specs.append((i + 1, difficulty, procedure, principle_ids, persona))
+
+    try:
+        worker_cap = int(client.config.llm.max_concurrent)
+    except AttributeError:
+        worker_cap = 16
+    n_workers = max(1, min(worker_cap, n_total))
+
+    pending: asyncio.Queue[tuple[int, _Difficulty, Procedure | None, list[str], Persona] | None] = (
+        asyncio.Queue()
+    )
+    for spec in specs:
+        pending.put_nowait(spec)
+    for _ in range(n_workers):
+        pending.put_nowait(None)
+
+    results: list[Scenario | None] = [None] * n_total
+
+    async def _worker() -> None:
+        while True:
+            spec = await pending.get()
+            try:
+                if spec is None:
+                    return
+                idx, diff, proc, pid_list, pers = spec
+                scen = await _generate_one_scenario(
+                    index=idx,
+                    golden=golden,
+                    persona=pers,
+                    difficulty=diff,
+                    procedure=proc,
+                    principle_ids=pid_list,
+                    client=client,
+                    temperature=temperature,
+                )
+                results[idx - 1] = scen
+            finally:
+                pending.task_done()
+
+    workers = [
+        asyncio.create_task(_worker(), name=f"sft-scenario-worker-{i}") for i in range(n_workers)
+    ]
+    await asyncio.gather(*workers, return_exceptions=False)
+
+    # Filter Nones — a worker exception (already raised above by gather) would
+    # have aborted, so any remaining None indicates a programmer error.
+    out: list[Scenario] = [s for s in results if s is not None]
+    return out
 
 
 # Re-exported for tests / pipeline visibility.
