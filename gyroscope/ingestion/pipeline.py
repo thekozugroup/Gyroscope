@@ -138,13 +138,9 @@ class IngestionPipeline:
                 try:
                     docs = await loader.load(source)
                 except Exception as exc:
-                    logger.warning(
-                        "loader %s failed on %s: %s", loader.name, source, exc
-                    )
+                    logger.warning("loader %s failed on %s: %s", loader.name, source, exc)
                     return []
-            logger.info(
-                "ingested: %s (%s, %d doc(s))", source, loader.name, len(docs)
-            )
+            logger.info("ingested: %s (%s, %d doc(s))", source, loader.name, len(docs))
             return docs
 
         all_lists = await asyncio.gather(

@@ -34,16 +34,14 @@ def _scenario_id(index: int) -> str:
     return f"SCN-{index:04d}"
 
 
-def _difficulty_targets(
-    n_total: int, difficulty_mix: dict[str, float]
-) -> dict[_Difficulty, int]:
+def _difficulty_targets(n_total: int, difficulty_mix: dict[str, float]) -> dict[_Difficulty, int]:
     """Convert a difficulty mix into integer counts that sum to `n_total`."""
     allowed = get_args(_Difficulty)
     weights = {d: max(0.0, float(difficulty_mix.get(d, 0.0))) for d in allowed}
     total_weight = sum(weights.values())
     if total_weight <= 0:
         # default: medium-only
-        return {d: (n_total if d == "medium" else 0) for d in allowed}  # type: ignore[misc]
+        return {d: (n_total if d == "medium" else 0) for d in allowed} 
 
     raw_counts = {d: weights[d] / total_weight * n_total for d in allowed}
     floors = {d: int(raw_counts[d]) for d in allowed}
@@ -53,10 +51,10 @@ def _difficulty_targets(
         ((raw_counts[d] - floors[d], idx, d) for idx, d in enumerate(allowed)),
         key=lambda t: (-t[0], t[1]),
     )
-    counts: dict[_Difficulty, int] = dict(floors)  # type: ignore[assignment]
+    counts: dict[_Difficulty, int] = dict(floors) 
     for i in range(remainder):
         _, _, d = fractions[i % len(fractions)]
-        counts[d] += 1  # type: ignore[index]
+        counts[d] += 1 
     return counts
 
 
@@ -101,8 +99,7 @@ def _build_user_prompt(
 ) -> str:
     if procedure is not None:
         anchor_block = (
-            f"PROCEDURE [{procedure.id}] {procedure.name}\n"
-            f"PURPOSE: {procedure.purpose}\n"
+            f"PROCEDURE [{procedure.id}] {procedure.name}\nPURPOSE: {procedure.purpose}\n"
         )
     elif principle_ids:
         anchor_block = "PRINCIPLES: " + ", ".join(principle_ids)
@@ -123,7 +120,7 @@ def _build_user_prompt(
         f"PERSONA DETAIL: {persona.description}\n\n"
         f"ANCHOR:\n{anchor_block}\n\n"
         f"DIFFICULTY: {difficulty} — {difficulty_hint}.\n\n"
-        f"Return JSON {{\"prompt_seed\": \"...\"}} only."
+        f'Return JSON {{"prompt_seed": "..."}} only.'
     )
 
 
@@ -150,9 +147,7 @@ async def _generate_one_scenario(
     principle_ids: list[str],
     client: LLMClient,
 ) -> Scenario:
-    user_prompt = _build_user_prompt(
-        golden, persona, difficulty, procedure, principle_ids
-    )
+    user_prompt = _build_user_prompt(golden, persona, difficulty, procedure, principle_ids)
     prompt_seed: str
     try:
         obj = await client.complete_json(
@@ -199,7 +194,7 @@ async def generate_scenarios(
     # but produce *exactly* the requested counts.
     difficulty_pool: list[_Difficulty] = []
     for d in get_args(_Difficulty):
-        difficulty_pool.extend([d] * targets.get(d, 0))  # type: ignore[arg-type]
+        difficulty_pool.extend([d] * targets.get(d, 0)) 
     # Stable interleave: sort using a deterministic pseudo-shuffle.
     rng = random.Random(13)
     rng.shuffle(difficulty_pool)
@@ -237,11 +232,9 @@ async def generate_scenarios(
 
 
 # Re-exported for tests / pipeline visibility.
-def difficulty_targets(
-    n_total: int, difficulty_mix: dict[str, float]
-) -> dict[str, int]:
+def difficulty_targets(n_total: int, difficulty_mix: dict[str, float]) -> dict[str, int]:
     """Public wrapper for the internal stratification helper."""
-    return dict(_difficulty_targets(n_total, difficulty_mix))
+    return {str(k): int(v) for k, v in _difficulty_targets(n_total, difficulty_mix).items()}
 
 
 def round_robin_anchors(

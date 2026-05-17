@@ -79,7 +79,11 @@ async def test_generate_scenarios_runs_in_parallel():
     fake = ConcurrencyTrackingLLM(expected_inflight=2, n_total=n_total)
 
     scenarios = await generate_scenarios(
-        golden, personas, fake, n_total, {"medium": 1.0}  # type: ignore[arg-type]
+        golden,
+        personas,
+        fake,
+        n_total,
+        {"medium": 1.0},  # type: ignore[arg-type]
     )
 
     assert len(scenarios) == n_total
@@ -88,9 +92,7 @@ async def test_generate_scenarios_runs_in_parallel():
         f"expected parallel fan-out; peak in-flight was {fake.peak_in_flight}"
     )
     # Order must still be deterministic by scenario index.
-    assert [s.id for s in scenarios] == [
-        f"SCN-{i:04d}" for i in range(1, n_total + 1)
-    ]
+    assert [s.id for s in scenarios] == [f"SCN-{i:04d}" for i in range(1, n_total + 1)]
 
 
 @pytest.mark.asyncio
@@ -104,11 +106,14 @@ async def test_generate_scenarios_creates_all_coros_before_first_finishes():
     fake = ConcurrencyTrackingLLM(expected_inflight=n_total, n_total=n_total)
 
     scenarios = await generate_scenarios(
-        golden, personas, fake, n_total, {"medium": 1.0}  # type: ignore[arg-type]
+        golden,
+        personas,
+        fake,
+        n_total,
+        {"medium": 1.0},  # type: ignore[arg-type]
     )
 
     assert len(scenarios) == n_total
     assert fake.peak_in_flight == n_total, (
-        f"all {n_total} coros must be in-flight together; peak was "
-        f"{fake.peak_in_flight}"
+        f"all {n_total} coros must be in-flight together; peak was {fake.peak_in_flight}"
     )

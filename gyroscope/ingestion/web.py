@@ -64,7 +64,7 @@ def _extract_links(html: str, base_url: str) -> list[str]:
     soup = BeautifulSoup(html, "html.parser")
     out: list[str] = []
     for a in soup.find_all("a", href=True):
-        href = a["href"].strip()
+        href = str(a.get("href") or "").strip()
         if not href or href.startswith(("mailto:", "javascript:", "tel:", "#")):
             continue
         absolute = _normalise_url(urljoin(base_url, href))
@@ -77,13 +77,16 @@ def _extract_links(html: str, base_url: str) -> list[str]:
 
 def _extract_content(html: str, url: str) -> tuple[str, str | None, str | None]:
     """Run trafilatura and return ``(text, title, sitename)``."""
-    text = trafilatura.extract(
-        html,
-        url=url,
-        include_comments=False,
-        include_tables=True,
-        favor_recall=True,
-    ) or ""
+    text = (
+        trafilatura.extract(
+            html,
+            url=url,
+            include_comments=False,
+            include_tables=True,
+            favor_recall=True,
+        )
+        or ""
+    )
     title: str | None = None
     sitename: str | None = None
     try:
@@ -221,21 +224,14 @@ class WebLoader(Loader):
                         current,
                         target,
                     )
-                    raise httpx.HTTPError(
-                        f"redirect to blocked host refused: {target}"
-                    )
-                if (
-                    self.same_host_only
-                    and target_host.lower() != origin_host.lower()
-                ):
+                    raise httpx.HTTPError(f"redirect to blocked host refused: {target}")
+                if self.same_host_only and target_host.lower() != origin_host.lower():
                     logger.warning(
                         "refusing off-host redirect (%s -> %s)",
                         current,
                         target,
                     )
-                    raise httpx.HTTPError(
-                        f"off-host redirect refused: {target}"
-                    )
+                    raise httpx.HTTPError(f"off-host redirect refused: {target}")
                 current = target
                 continue
             resp.raise_for_status()
@@ -285,9 +281,7 @@ class WebLoader(Loader):
             future.set_result(parser)
         return future
 
-    async def _load_robots(
-        self, client: httpx.AsyncClient, host: str
-    ) -> RobotFileParser | None:
+    async def _load_robots(self, client: httpx.AsyncClient, host: str) -> RobotFileParser | None:
         robots_url = f"{host}/robots.txt"
         try:
             resp = await client.get(robots_url)
@@ -347,7 +341,11 @@ class WebLoader(Loader):
 
         while queue and len(visited) < self.max_pages:
             batch: list[tuple[str, int, str]] = []
-            while queue and len(batch) < self.concurrency and (len(visited) + len(batch)) < self.max_pages:
+            while (
+                queue
+                and len(batch) < self.concurrency
+                and (len(visited) + len(batch)) < self.max_pages
+            ):
                 url, depth, seed = queue.popleft()
                 url = _normalise_url(url)
                 if url in visited:

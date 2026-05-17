@@ -92,6 +92,7 @@ def test_render_unknown_format_raises_with_registered_list():
 
 def test_register_format_overrides_existing_binding(restore_registry):
     """Overwriting an existing name lets tests swap implementations safely."""
+
     def replacement(traj: Trajectory) -> dict[str, Any]:
         return {"replaced": True, "id": traj.id}
 

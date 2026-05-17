@@ -49,9 +49,7 @@ class Deduplicator:
         num_perm: int = 128,
     ) -> None:
         if not 0.0 < config.dedup_threshold <= 1.0:
-            raise ValueError(
-                f"dedup_threshold must be in (0, 1]; got {config.dedup_threshold}"
-            )
+            raise ValueError(f"dedup_threshold must be in (0, 1]; got {config.dedup_threshold}")
         self._threshold = config.dedup_threshold
         self._shingle_size = shingle_size
         self._num_perm = num_perm

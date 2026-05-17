@@ -104,12 +104,8 @@ def test_is_retryable_llm_error_classifies_correctly() -> None:
 
 
 def test_is_retryable_llm_error_distinguishes_5xx_from_other_status_errors() -> None:
-    five_oh_three = APIStatusError(
-        "service unavailable", response=_make_response(503), body=None
-    )
-    four_oh_four = APIStatusError(
-        "not found", response=_make_response(404), body=None
-    )
+    five_oh_three = APIStatusError("service unavailable", response=_make_response(503), body=None)
+    four_oh_four = APIStatusError("not found", response=_make_response(404), body=None)
     assert _is_retryable_llm_error(five_oh_three) is True
     assert _is_retryable_llm_error(four_oh_four) is False
 

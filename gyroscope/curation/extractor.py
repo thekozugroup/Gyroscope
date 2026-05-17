@@ -158,7 +158,7 @@ def _render_chunks(chunks: Iterable[Chunk]) -> str:
     out: list[str] = []
     for chunk in chunks:
         out.append(
-            f"<<CHUNK id=\"{chunk.id}\" source=\"{chunk.document_source}\">>\n"
+            f'<<CHUNK id="{chunk.id}" source="{chunk.document_source}">>\n'
             f"{chunk.text}\n"
             f"<<END CHUNK {chunk.id}>>"
         )
@@ -268,8 +268,7 @@ async def extract_identity(chunks: list[Chunk], client: LLMClient) -> Identity:
     try:
         return Identity(
             role=str(payload.get("role", "Unspecified Role")).strip() or "Unspecified Role",
-            description=str(payload.get("description", "")).strip()
-            or "No description provided.",
+            description=str(payload.get("description", "")).strip() or "No description provided.",
             mission=str(payload.get("mission", "")).strip() or "No mission defined.",
         )
     except ValidationError as exc:

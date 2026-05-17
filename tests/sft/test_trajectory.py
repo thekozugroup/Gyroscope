@@ -71,7 +71,11 @@ async def test_trajectory_sequencing_and_critic(monkeypatch):
     # ids the test asserts on.
     cfg = SFTConfig(use_planner=True, max_turns=4)
     t = await build_trajectory(
-        scenario, golden, client=object(), max_turns=4, personas=personas,  # type: ignore[arg-type]
+        scenario,
+        golden,
+        client=object(),
+        max_turns=4,
+        personas=personas,  # type: ignore[arg-type]
         config=cfg,
     )
 
@@ -165,7 +169,11 @@ async def test_repair_pass_re_rolls_last_assistant_when_below_threshold(monkeypa
     monkeypatch.setattr(traj_mod, "_critic_score", fake_critic)
 
     t = await build_trajectory(
-        scenario, golden, client=object(), max_turns=1, config=cfg  # type: ignore[arg-type]
+        scenario,
+        golden,
+        client=object(),
+        max_turns=1,
+        config=cfg,  # type: ignore[arg-type]
     )
     # Last assistant message should be the final re-roll.
     assert t.messages[-1].role == "assistant"
@@ -209,7 +217,11 @@ async def test_repair_loop_respects_max_attempts(monkeypatch):
     monkeypatch.setattr(traj_mod, "_critic_score", fake_critic)
 
     t = await build_trajectory(
-        scenario, golden, client=object(), max_turns=1, config=cfg  # type: ignore[arg-type]
+        scenario,
+        golden,
+        client=object(),
+        max_turns=1,
+        config=cfg,  # type: ignore[arg-type]
     )
     # Should have exactly 1 user + 1 assistant; quality stays below threshold.
     assert sum(1 for m in t.messages if m.role == "assistant") == 1

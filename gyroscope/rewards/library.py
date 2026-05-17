@@ -26,7 +26,7 @@ from typing import Any
 try:  # ``jsonschema`` is a runtime dependency, but soft-import for robustness.
     import jsonschema
 except Exception:  # pragma: no cover - exercised only when dep is missing
-    jsonschema = None  # type: ignore[assignment]
+    jsonschema = None 
 
 logger = logging.getLogger(__name__)
 
@@ -186,12 +186,8 @@ def lexical(
 
     def score(c: str) -> float:
         hay = normalise(c)
-        hit = (
-            sum(1 for r in req_n if r in hay) / len(req_n) if req_n else 1.0
-        )
-        miss = (
-            sum(1 for f in forb_n if f not in hay) / len(forb_n) if forb_n else 1.0
-        )
+        hit = sum(1 for r in req_n if r in hay) / len(req_n) if req_n else 1.0
+        miss = sum(1 for f in forb_n if f not in hay) / len(forb_n) if forb_n else 1.0
         return hit * miss
 
     return _safe_for_each(completions, score)

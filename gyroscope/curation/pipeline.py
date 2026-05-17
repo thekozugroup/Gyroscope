@@ -60,7 +60,9 @@ class CurationPipeline:
 
         # Run the six extractors in parallel; the LLMClient semaphore caps
         # concurrent in-flight requests.
-        logger.info("Extracting identity / principles / procedures / knowledge / vocabulary / anti-patterns")
+        logger.info(
+            "Extracting identity / principles / procedures / knowledge / vocabulary / anti-patterns"
+        )
         (
             identity,
             principles,

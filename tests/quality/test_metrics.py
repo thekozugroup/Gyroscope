@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from gyroscope.core.models import (
     AntiPattern,
     GoldenDocument,
@@ -26,13 +24,14 @@ from gyroscope.quality.metrics import (
     trainability_score,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
 
-def _golden(n_principles: int = 30, n_procedures: int = 15, n_knowledge: int = 100) -> GoldenDocument:
+def _golden(
+    n_principles: int = 30, n_procedures: int = 15, n_knowledge: int = 100
+) -> GoldenDocument:
     return GoldenDocument(
         identity=Identity(role="Surveyor", description="d", mission="m"),
         principles=[
@@ -132,14 +131,18 @@ def test_faithfulness_flags_weak_trajectory_overlap():
 
 
 def test_diversity_low_when_all_trajectories_identical():
-    trajs = [_traj(i, "PRC-0001", "same q", "same a same a same a same a same a") for i in range(10)]
+    trajs = [
+        _traj(i, "PRC-0001", "same q", "same a same a same a same a same a") for i in range(10)
+    ]
     a = diversity_score(trajs)
     assert a.score < 40
 
 
 def test_diversity_high_with_varied_trajectories():
     trajs = [
-        _traj(i, f"PRC-{i:04d}", f"unique question {i}", f"unique answer {i} alpha beta gamma delta")
+        _traj(
+            i, f"PRC-{i:04d}", f"unique question {i}", f"unique answer {i} alpha beta gamma delta"
+        )
         for i in range(10)
     ]
     a = diversity_score(trajs)

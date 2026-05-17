@@ -53,9 +53,7 @@ def test_dedup_near_duplicates_collapse_at_low_threshold():
         _chunk("a-0001", base),
         _chunk("a-0002", near),
     ]
-    deduper = Deduplicator(
-        CurationConfig(dedup_threshold=0.6), shingle_size=2, num_perm=128
-    )
+    deduper = Deduplicator(CurationConfig(dedup_threshold=0.6), shingle_size=2, num_perm=128)
     kept = deduper.dedupe(chunks)
     assert len(kept) == 1
     assert kept[0].id == "a-0001"

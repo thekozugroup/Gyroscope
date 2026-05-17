@@ -110,17 +110,13 @@ def _write_min_run(tmp_path: Path) -> Path:
         },
         quality_score=0.9,
     )
-    (run / "sft.jsonl").write_text(
-        json.dumps(to_sharegpt(traj)) + "\n", encoding="utf-8"
-    )
+    (run / "sft.jsonl").write_text(json.dumps(to_sharegpt(traj)) + "\n", encoding="utf-8")
 
     # 4. rewards/reward_spec.yaml — empty specs list is a valid bundle for
     #    the report command (it just produces a 0 reward_soundness score).
     rewards_dir = run / "rewards"
     rewards_dir.mkdir()
-    (rewards_dir / "reward_spec.yaml").write_text(
-        yaml.safe_dump({"specs": []}), encoding="utf-8"
-    )
+    (rewards_dir / "reward_spec.yaml").write_text(yaml.safe_dump({"specs": []}), encoding="utf-8")
 
     return run
 
@@ -136,8 +132,7 @@ def test_report_subcommand_round_trips_through_from_sharegpt(tmp_path: Path) -> 
     )
 
     assert result.exit_code == 0, (
-        f"report exited {result.exit_code}; stdout:\n{result.stdout}\n"
-        f"exc: {result.exception!r}"
+        f"report exited {result.exit_code}; stdout:\n{result.stdout}\nexc: {result.exception!r}"
     )
     # All three artefacts must land on disk.
     assert (run / "report.md").exists(), "report.md missing"

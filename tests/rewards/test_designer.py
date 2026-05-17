@@ -40,9 +40,7 @@ def _make_golden(
     ]
     if principle_extras:
         for j, text in enumerate(principle_extras):
-            principles.append(
-                Principle(id=f"PRN-9{j:03d}", statement=text, weight=0.5)
-            )
+            principles.append(Principle(id=f"PRN-9{j:03d}", statement=text, weight=0.5))
     procedures = [
         Procedure(
             id=f"PRC-{i:04d}",
@@ -65,14 +63,8 @@ def _make_golden(
         )
         for i in range(n_anti_patterns)
     ]
-    vocab = [
-        VocabularyTerm(term=f"term_{i}", definition="definition")
-        for i in range(n_vocab)
-    ]
-    knowledge = [
-        KnowledgeItem(id=f"KNW-{i:04d}", statement="fact")
-        for i in range(n_knowledge)
-    ]
+    vocab = [VocabularyTerm(term=f"term_{i}", definition="definition") for i in range(n_vocab)]
+    knowledge = [KnowledgeItem(id=f"KNW-{i:04d}", statement="fact") for i in range(n_knowledge)]
     return GoldenDocument(
         identity=Identity(
             role="Test Role",

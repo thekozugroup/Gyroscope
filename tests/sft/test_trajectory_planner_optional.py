@@ -64,7 +64,10 @@ async def test_planner_skipped_when_use_planner_false(monkeypatch):
 
     cfg = SFTConfig(use_planner=False, max_turns=1)
     t = await build_trajectory(
-        scenario, golden, client=object(), config=cfg  # type: ignore[arg-type]
+        scenario,
+        golden,
+        client=object(),
+        config=cfg,  # type: ignore[arg-type]
     )
 
     # The planner LLM step must NOT have been called.
@@ -113,7 +116,10 @@ async def test_planner_called_when_use_planner_true(monkeypatch):
 
     cfg = SFTConfig(use_planner=True, max_turns=1)
     await build_trajectory(
-        scenario, golden, client=object(), config=cfg  # type: ignore[arg-type]
+        scenario,
+        golden,
+        client=object(),
+        config=cfg,  # type: ignore[arg-type]
     )
 
     assert counts["planner"] == 1

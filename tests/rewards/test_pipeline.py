@@ -22,9 +22,7 @@ from gyroscope.rewards.pipeline import RewardsPipeline
 
 def _small_golden() -> GoldenDocument:
     return GoldenDocument(
-        identity=Identity(
-            role="QA Engineer", description="Tests stuff", mission="Find bugs"
-        ),
+        identity=Identity(role="QA Engineer", description="Tests stuff", mission="Find bugs"),
         principles=[
             Principle(id="PRN-0001", statement="cite sources clearly", weight=1.5),
             Principle(id="PRN-0002", statement="prefer concise answers", weight=1.0),

@@ -63,9 +63,7 @@ def _select_principles(
     return chosen[:max_n]
 
 
-def _selected_procedure(
-    golden: GoldenDocument, scenario: Scenario
-) -> Procedure | None:
+def _selected_procedure(golden: GoldenDocument, scenario: Scenario) -> Procedure | None:
     if not scenario.procedure_id:
         return None
     for p in golden.procedures:
@@ -159,11 +157,7 @@ def build_system_prompt(golden: GoldenDocument, scenario: Scenario) -> str:
     form is retained for the recorded ``Trajectory.system`` field and for
     the legacy public API.
     """
-    return (
-        build_stable_system_prefix(golden)
-        + "\n\n"
-        + build_scenario_suffix(scenario, golden)
-    )
+    return build_stable_system_prefix(golden) + "\n\n" + build_scenario_suffix(scenario, golden)
 
 
 # ---------------------------------------------------------------------------
@@ -425,9 +419,7 @@ Return JSON only. Schema:
 """.strip()
 
 
-def _critic_user_prompt(
-    scenario_suffix: str, messages: list[TrajectoryMessage]
-) -> str:
+def _critic_user_prompt(scenario_suffix: str, messages: list[TrajectoryMessage]) -> str:
     """Build the critic *user* message.
 
     The stable critic system prompt is the SAME for every scenario (so it
@@ -670,9 +662,7 @@ async def build_trajectory(
             scenario_suffix=scenario_suffix,
             config=cfg,
         )
-        trajectory.messages[last_assist_idx] = TrajectoryMessage(
-            role="assistant", content=new_text
-        )
+        trajectory.messages[last_assist_idx] = TrajectoryMessage(role="assistant", content=new_text)
         new_score, new_notes = await _critic_score(
             trajectory,
             golden,

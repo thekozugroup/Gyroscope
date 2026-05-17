@@ -16,14 +16,12 @@ The mapping from failing axis → phase(s) to re-run:
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
-from pathlib import Path
 
 from gyroscope.core.config import GyroscopeConfig
-from gyroscope.core.io import read_jsonl, write_jsonl
+from gyroscope.core.io import write_jsonl
 from gyroscope.core.llm import LLMClient
 from gyroscope.core.models import Document, GoldenDocument, RewardSpec, Trajectory
 from gyroscope.quality.metrics import QualityReport, assemble_report
@@ -60,7 +58,9 @@ class RunArtefacts:
 class AutonomousRunner:
     """Drives an end-to-end run + iteration loop using the quality metrics."""
 
-    def __init__(self, config: GyroscopeConfig, *, threshold: float = 95.0, max_iterations: int = 5):
+    def __init__(
+        self, config: GyroscopeConfig, *, threshold: float = 95.0, max_iterations: int = 5
+    ):
         self.config = config
         self.threshold = threshold
         self.max_iterations = max_iterations
@@ -68,7 +68,7 @@ class AutonomousRunner:
 
     # ----- phase callers (thin wrappers so tests can monkey-patch) -----
 
-    async def _phase_ingest(self, client: LLMClient) -> list[Document]:  # noqa: ARG002
+    async def _phase_ingest(self, client: LLMClient) -> list[Document]:
         from gyroscope.ingestion.pipeline import IngestionPipeline
 
         pipe = IngestionPipeline()
@@ -77,15 +77,11 @@ class AutonomousRunner:
         write_jsonl(out, (d.model_dump(mode="json") for d in docs))
         return docs
 
-    async def _phase_curate(
-        self, documents: list[Document], client: LLMClient
-    ) -> GoldenDocument:
+    async def _phase_curate(self, documents: list[Document], client: LLMClient) -> GoldenDocument:
         from gyroscope.curation.pipeline import CurationPipeline
 
         golden = await CurationPipeline(self.config).distill(documents, client)
-        (self.config.output_dir / "golden.md").write_text(
-            golden.to_markdown(), encoding="utf-8"
-        )
+        (self.config.output_dir / "golden.md").write_text(golden.to_markdown(), encoding="utf-8")
         (self.config.output_dir / "golden.json").write_text(
             golden.model_dump_json(indent=2), encoding="utf-8"
         )
@@ -110,9 +106,7 @@ class AutonomousRunner:
         EvalPipeline(output_format=fmt).write(eval_, train, out_dir, strict=False)
         return train, eval_
 
-    async def _phase_rewards(
-        self, golden: GoldenDocument, client: LLMClient
-    ) -> list[RewardSpec]:
+    async def _phase_rewards(self, golden: GoldenDocument, client: LLMClient) -> list[RewardSpec]:
         from gyroscope.rewards.pipeline import RewardsPipeline
 
         bundle_path = await RewardsPipeline().run(
@@ -161,16 +155,10 @@ class AutonomousRunner:
         if phase == "sft":
             # Bump diversity: more personas, higher temperature, stricter critic.
             self.config.sft.n_personas = min(24, self.config.sft.n_personas + 4)
-            self.config.llm.temperature_swarm = min(
-                1.0, self.config.llm.temperature_swarm + 0.1
-            )
-            self.config.sft.critic_min_score = min(
-                0.9, self.config.sft.critic_min_score + 0.05
-            )
+            self.config.llm.temperature_swarm = min(1.0, self.config.llm.temperature_swarm + 0.1)
+            self.config.sft.critic_min_score = min(0.9, self.config.sft.critic_min_score + 0.05)
         if phase == "rewards":
-            self.config.rewards.reward_budget = max(
-                4, self.config.rewards.reward_budget + 2
-            )
+            self.config.rewards.reward_budget = max(4, self.config.rewards.reward_budget + 2)
 
     async def run(self) -> RunArtefacts:
         """Run end-to-end, iterating failing phases until all axes pass or budget hits."""
@@ -203,7 +191,9 @@ class AutonomousRunner:
                 if "rewards" in phases or "curation" in phases:
                     art.rewards = await self._phase_rewards(art.golden, client)
                 report = self._grade(art)
-                self.history.append(IterationResult(iteration=it, report=report, phases_re_run=phases))
+                self.history.append(
+                    IterationResult(iteration=it, report=report, phases_re_run=phases)
+                )
                 logger.info("Iteration %d overall: %.1f", it, report.overall())
 
         self._write_report(report)

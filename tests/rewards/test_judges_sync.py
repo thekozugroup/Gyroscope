@@ -32,18 +32,12 @@ def test_no_api_key_falls_back_to_heuristic_and_warns_once(
         first = judge(["q"], ["alpha beta [KNW-1]"], criterion="alpha beta")
         second = judge(["q"], ["alpha beta [KNW-1]"], criterion="alpha beta")
 
-    expected = heuristic_judge(
-        ["q"], ["alpha beta [KNW-1]"], "alpha beta"
-    )
+    expected = heuristic_judge(["q"], ["alpha beta [KNW-1]"], "alpha beta")
     assert first == expected
     assert second == expected
 
-    warnings = [
-        r for r in caplog.records if "falling back" in r.getMessage()
-    ]
-    assert len(warnings) == 1, (
-        f"expected exactly one warning per instance, got {len(warnings)}"
-    )
+    warnings = [r for r in caplog.records if "falling back" in r.getMessage()]
+    assert len(warnings) == 1, f"expected exactly one warning per instance, got {len(warnings)}"
 
 
 def test_each_instance_warns_independently(
@@ -53,9 +47,7 @@ def test_each_instance_warns_independently(
     with caplog.at_level("WARNING", logger="gyroscope.rewards.judges"):
         LLMJudge()(["q"], ["x"], criterion="y")
         LLMJudge()(["q"], ["x"], criterion="y")
-    warnings = [
-        r for r in caplog.records if "falling back" in r.getMessage()
-    ]
+    warnings = [r for r in caplog.records if "falling back" in r.getMessage()]
     assert len(warnings) == 2
 
 
@@ -162,9 +154,7 @@ def test_sync_call_retries_on_transient_failure(
 
     monkeypatch.setattr(anthropic, "Anthropic", _FlakyAnthropic)
     # Make backoff effectively zero so the test is fast.
-    monkeypatch.setattr(
-        "gyroscope.rewards.judges._BACKOFF_BASE", 0.0, raising=True
-    )
+    monkeypatch.setattr("gyroscope.rewards.judges._BACKOFF_BASE", 0.0, raising=True)
 
     judge = LLMJudge(api_key="sk-unit-test")
     out = judge(["p"], ["c"], criterion="crit")

@@ -9,7 +9,6 @@ from typing import Any
 
 import yaml
 
-
 # ---------------------------------------------------------------------------
 # JSONL
 # ---------------------------------------------------------------------------
@@ -72,7 +71,7 @@ def golden_to_markdown(golden: Any) -> str:
     lines: list[str] = []
     g = golden
 
-    lines.append(f"# Identity\n")
+    lines.append("# Identity\n")
     lines.append(f"**Role:** {g.identity.role}\n")
     lines.append(f"{g.identity.description}\n")
 

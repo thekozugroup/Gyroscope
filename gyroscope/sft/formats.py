@@ -10,9 +10,11 @@ if/elif chains when a new output shape is added.
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Literal, cast
 
 from gyroscope.core.models import Trajectory, TrajectoryMessage
+
+_MessageRole = Literal["system", "user", "assistant", "tool"]
 
 # ShareGPT uses non-standard role names: human/gpt/system/tool.
 _SHAREGPT_ROLE: dict[str, str] = {
@@ -116,9 +118,7 @@ def to_alpaca(traj: Trajectory) -> dict[str, Any]:
             last_assistant_idx = idx
             break
     if last_assistant_idx is None:
-        raise ValueError(
-            f"Trajectory {traj.id} has no assistant turn; cannot convert to Alpaca."
-        )
+        raise ValueError(f"Trajectory {traj.id} has no assistant turn; cannot convert to Alpaca.")
 
     instruction = messages[last_user_idx].content
     output = messages[last_assistant_idx].content
@@ -177,7 +177,7 @@ def from_sharegpt(row: dict[str, Any]) -> Trajectory:
         sg_role = entry.get("from", "")
         if sg_role not in _SHAREGPT_ROLE_INVERSE:
             raise ValueError(f"Unknown sharegpt role: {sg_role!r}")
-        role = _SHAREGPT_ROLE_INVERSE[sg_role]
+        role = cast(_MessageRole, _SHAREGPT_ROLE_INVERSE[sg_role])
         content = entry.get("value", "")
         if role == "system" and not system:
             system = content
@@ -208,7 +208,11 @@ def from_chatml(row: dict[str, Any]) -> Trajectory:
             continue
         if role not in {"system", "user", "assistant", "tool"}:
             raise ValueError(f"Unknown chatml role: {role!r}")
-        messages.append(TrajectoryMessage(role=role, content=content, name=entry.get("name")))
+        messages.append(
+            TrajectoryMessage(
+                role=cast(_MessageRole, role), content=content, name=entry.get("name")
+            )
+        )
 
     return Trajectory(
         id=row.get("id", "TRJ-unknown"),

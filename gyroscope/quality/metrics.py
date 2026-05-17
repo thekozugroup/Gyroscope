@@ -11,7 +11,6 @@ at 95+; the autonomous loop iterates until everything is ≥ the target.
 
 from __future__ import annotations
 
-import json
 import math
 import re
 from collections import Counter
@@ -19,14 +18,10 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from gyroscope.core.models import (
-    AntiPattern,
     GoldenDocument,
-    Principle,
-    Procedure,
     RewardSpec,
     Trajectory,
 )
-
 
 # ---------------------------------------------------------------------------
 # Data classes
@@ -197,9 +192,7 @@ def faithfulness_score(
             if overlap < 0.05:
                 weak += 1
         trajectory_signal = 1.0 - (weak / max(1, len(trajectories)))
-        notes.append(
-            f"trajectories with weak golden overlap: {weak}/{len(trajectories)}"
-        )
+        notes.append(f"trajectories with weak golden overlap: {weak}/{len(trajectories)}")
 
     score = _bounded(100 * (0.6 * citation_rate + 0.4 * trajectory_signal))
     return AxisScore(

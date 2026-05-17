@@ -62,9 +62,9 @@ def _principle_pair() -> list[Principle]:
 def _knowledge_pair() -> list[KnowledgeItem]:
     """Same construction as ``_principle_pair`` but for KnowledgeItem.
 
-      A = {concrete, sets, in, 28, days}                 -> 5 tokens
-      B = {concrete, sets, hard, in, 28, days}           -> 6 tokens
-      |A intersect B| = 5, |A union B| = 6 -> 5/6 ~= 0.833.
+    A = {concrete, sets, in, 28, days}                 -> 5 tokens
+    B = {concrete, sets, hard, in, 28, days}           -> 6 tokens
+    |A intersect B| = 5, |A union B| = 6 -> 5/6 ~= 0.833.
     """
     return [
         KnowledgeItem(

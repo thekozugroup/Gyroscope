@@ -37,9 +37,7 @@ def _persona_id(index: int) -> str:
 
 
 def _build_user_prompt(golden: GoldenDocument, n: int) -> str:
-    principles_sample = "\n".join(
-        f"- [{p.id}] {p.statement}" for p in golden.principles[:8]
-    )
+    principles_sample = "\n".join(f"- [{p.id}] {p.statement}" for p in golden.principles[:8])
     procedures_sample = "\n".join(
         f"- [{proc.id}] {proc.name}: {proc.purpose}" for proc in golden.procedures[:6]
     )
@@ -102,9 +100,7 @@ def _fallback_personas(n: int, golden: GoldenDocument) -> list[Persona]:
             Persona(
                 id=_persona_id(idx),
                 name=f"{exp.capitalize()} stakeholder {idx}",
-                description=(
-                    f"A {exp} who interacts with a {role}. Tone: {tone}."
-                ),
+                description=(f"A {exp} who interacts with a {role}. Tone: {tone}."),
                 expertise_level=exp,
                 tone=tone,
             )

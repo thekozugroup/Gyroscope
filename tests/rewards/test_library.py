@@ -65,16 +65,12 @@ class TestFormatJsonSchema:
 class TestFormatSections:
     def test_all_present(self) -> None:
         text = "# Intro\nsome\n## Body\nmore\n### Conclusion\nend"
-        scores = lib.format_sections(
-            [text], sections=["Intro", "Body", "Conclusion"]
-        )
+        scores = lib.format_sections([text], sections=["Intro", "Body", "Conclusion"])
         assert scores == [1.0]
 
     def test_partial(self) -> None:
         text = "# Intro\nsome\n## Body\nmore"
-        scores = lib.format_sections(
-            [text], sections=["Intro", "Body", "Conclusion"]
-        )
+        scores = lib.format_sections([text], sections=["Intro", "Body", "Conclusion"])
         assert scores == [pytest.approx(2 / 3)]
 
     def test_missing_all(self) -> None:

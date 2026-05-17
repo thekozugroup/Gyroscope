@@ -116,9 +116,7 @@ async def _bounded_build(
     )
 
 
-def _drop_low_quality(
-    trajectories: Iterable[Trajectory], min_score: float
-) -> list[Trajectory]:
+def _drop_low_quality(trajectories: Iterable[Trajectory], min_score: float) -> list[Trajectory]:
     out: list[Trajectory] = []
     for t in trajectories:
         if t.quality_score is None or t.quality_score < min_score:
@@ -155,9 +153,7 @@ async def run_swarm(
 
     # Build all trajectories concurrently — the LLMClient enforces the global cap.
     all_scenarios = train_scenarios + eval_scenarios
-    coros = [
-        _bounded_build(s, golden, client, config, personas) for s in all_scenarios
-    ]
+    coros = [_bounded_build(s, golden, client, config, personas) for s in all_scenarios]
     results = await asyncio.gather(*coros)
 
     by_id: dict[str, Scenario] = {s.id: s for s in all_scenarios}

@@ -64,9 +64,9 @@ async def test_pipeline_mixed_sources_ordering_and_failure_isolation(tmp_path: P
     pipeline = IngestionPipeline(registry=registry, max_concurrent=4)
 
     sources: list[str | Path] = [
-        tmp_path,                       # directory expansion
-        "https://example.com/page",     # web (stubbed)
-        bad,                            # exploding loader — must not kill batch
+        tmp_path,  # directory expansion
+        "https://example.com/page",  # web (stubbed)
+        bad,  # exploding loader — must not kill batch
     ]
     docs = await pipeline.ingest(sources)
 

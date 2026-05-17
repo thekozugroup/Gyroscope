@@ -49,9 +49,7 @@ def _tiny_golden() -> GoldenDocument:
         ],
         knowledge=[KnowledgeItem(id="KNW-0001", statement="fact")],
         vocabulary=[VocabularyTerm(term="alpha", definition="d")],
-        anti_patterns=[
-            AntiPattern(id="ANT-0001", description="bad", why_bad="r", correction="c")
-        ],
+        anti_patterns=[AntiPattern(id="ANT-0001", description="bad", why_bad="r", correction="c")],
     )
 
 

@@ -58,7 +58,11 @@ def _bundle_with_all_kinds() -> RewardBundle:
             description="Follow workflow",
             weight=1.0,
             procedure_ids=["PRC-0001"],
-            config={"procedure_id": "PRC-0001", "ordered": True, "ordered_steps": ["gather", "design", "ship"]},
+            config={
+                "procedure_id": "PRC-0001",
+                "ordered": True,
+                "ordered_steps": ["gather", "design", "ship"],
+            },
         ),
         RewardSpec(
             name="safety_main",
@@ -213,7 +217,8 @@ def test_principle_reward_accepts_injected_judge(tmp_path: Path) -> None:
     module = _load_generated(rewards_path)
 
     principle_fn = next(
-        fn for fn in module.REWARDS  # type: ignore[attr-defined]
+        fn
+        for fn in module.REWARDS  # type: ignore[attr-defined]
         if fn.__name__ == "reward_principle_main"
     )
 

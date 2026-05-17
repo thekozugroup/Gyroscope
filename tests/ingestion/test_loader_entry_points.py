@@ -26,9 +26,7 @@ class _SentinelLoader(Loader):
         return source.startswith("sentinel://")
 
     async def load(self, source: str) -> list[Document]:
-        return [
-            Document(source=source, kind=DocumentKind.TXT, text="sentinel-payload")
-        ]
+        return [Document(source=source, kind=DocumentKind.TXT, text="sentinel-payload")]
 
 
 class _FakeEntryPoint:

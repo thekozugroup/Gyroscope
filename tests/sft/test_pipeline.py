@@ -80,9 +80,7 @@ async def test_sft_pipeline_streams_rows_via_generator(
     monkeypatch.setattr(pipeline_mod, "write_jsonl", spy_write_jsonl)
 
     pipeline = SFTPipeline()
-    train_path, eval_path = await pipeline.run(
-        golden, tmp_path, client=None, config=SFTConfig()
-    )
+    train_path, eval_path = await pipeline.run(golden, tmp_path, client=None, config=SFTConfig())
 
     assert train_path.exists()
     assert eval_path.exists()
@@ -158,9 +156,7 @@ async def test_sft_pipeline_routes_eval_split_through_eval_pipeline(
     monkeypatch.setattr(pipeline_mod.EvalPipeline, "write", recording_write)
 
     pipeline = SFTPipeline()
-    train_path, eval_path = await pipeline.run(
-        golden, tmp_path, client=None, config=SFTConfig()
-    )
+    train_path, eval_path = await pipeline.run(golden, tmp_path, client=None, config=SFTConfig())
 
     assert train_path.exists() and eval_path.exists()
     assert len(write_calls) == 1, "EvalPipeline.write must be invoked exactly once"

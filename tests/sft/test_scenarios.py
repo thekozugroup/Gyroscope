@@ -68,9 +68,7 @@ async def test_generate_scenarios_distribution_roughly_matches_mix():
     mix = {"easy": 0.25, "medium": 0.5, "hard": 0.2, "adversarial": 0.05}
 
     # Stub returns the same prompt seed for every call.
-    fake = FakeLLM(
-        json_responses=[{"prompt_seed": f"seed-{i}"} for i in range(n_total)]
-    )
+    fake = FakeLLM(json_responses=[{"prompt_seed": f"seed-{i}"} for i in range(n_total)])
     scenarios = await generate_scenarios(golden, personas, fake, n_total, mix)  # type: ignore[arg-type]
 
     assert len(scenarios) == n_total
@@ -91,9 +89,7 @@ async def test_generate_scenarios_distribution_roughly_matches_mix():
         if s.procedure_id is None:
             continue
         procedure_visits[s.procedure_id] = procedure_visits.get(s.procedure_id, 0) + 1
-        if procedure_visits[s.procedure_id] > 1 and len(procedure_visits) < len(
-            golden.procedures
-        ):
+        if procedure_visits[s.procedure_id] > 1 and len(procedure_visits) < len(golden.procedures):
             saw_repeat = True
     assert not saw_repeat
 
@@ -104,7 +100,11 @@ async def test_generate_scenarios_falls_back_when_llm_empty():
     personas = _personas(1)
     fake = FakeLLM(json_responses=[{} for _ in range(4)])
     scenarios = await generate_scenarios(
-        golden, personas, fake, 4, {"medium": 1.0}  # type: ignore[arg-type]
+        golden,
+        personas,
+        fake,
+        4,
+        {"medium": 1.0},  # type: ignore[arg-type]
     )
     assert len(scenarios) == 4
     # Fallback seed mentions persona expertise.

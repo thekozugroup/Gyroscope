@@ -207,6 +207,8 @@ async def test_curation_pipeline_end_to_end(tmp_path: Path):
 async def test_pipeline_rejects_empty_corpus(tmp_path: Path):
     cfg = GyroscopeConfig(api_key="test", output_dir=tmp_path)
     pipeline = CurationPipeline(cfg)
-    client = _StubClient(identity_payload={"role": "x", "description": "y", "mission": "z"}, array_queue=[])
+    client = _StubClient(
+        identity_payload={"role": "x", "description": "y", "mission": "z"}, array_queue=[]
+    )
     with pytest.raises(ValueError):
         await pipeline.distill([], client)

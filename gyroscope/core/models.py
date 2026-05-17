@@ -7,19 +7,18 @@ swapped, mocked, or re-run independently.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from enum import Enum
+from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
-
 
 # ---------------------------------------------------------------------------
 # Ingestion
 # ---------------------------------------------------------------------------
 
 
-class DocumentKind(str, Enum):
+class DocumentKind(StrEnum):
     PDF = "pdf"
     WEB = "web"
     MARKDOWN = "md"
@@ -38,7 +37,7 @@ class Document(BaseModel):
     text: str = Field(..., description="Cleaned plain text or markdown.")
     title: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
-    ingested_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    ingested_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     def token_estimate(self) -> int:
         """Cheap len/4 estimate, useful before paying for a real tokenizer."""
@@ -140,7 +139,7 @@ class GoldenDocument(BaseModel):
     vocabulary: list[VocabularyTerm] = Field(default_factory=list)
     anti_patterns: list[AntiPattern] = Field(default_factory=list)
     source_documents: list[str] = Field(default_factory=list)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     def to_markdown(self) -> str:
         """Render the golden document as the canonical markdown format."""
@@ -208,7 +207,7 @@ class Trajectory(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class RewardKind(str, Enum):
+class RewardKind(StrEnum):
     FORMAT = "format"
     LEXICAL = "lexical"
     PRINCIPLE = "principle"

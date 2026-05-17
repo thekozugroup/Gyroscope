@@ -44,9 +44,9 @@ def _clean_html_text(html: str) -> tuple[str, str | None, list[dict[str, int | s
     text = _BLANKLINE_RE.sub("\n\n", text).strip() + "\n"
     if title is None:
         # Fall back to the first heading.
-        for h in headings:
-            if h["level"] == 1:
-                title = str(h["text"])
+        for heading in headings:
+            if heading["level"] == 1:
+                title = str(heading["text"])
                 break
     return text, title, headings
 

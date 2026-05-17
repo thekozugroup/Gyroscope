@@ -15,11 +15,11 @@ from typing import Any
 
 import pytest
 
-_CHUNK_ID_RE = re.compile(r'<<CHUNK id="([^"]+)"')
-
 from gyroscope.core.config import GyroscopeConfig
-from gyroscope.core.models import GoldenDocument, RewardSpec
+from gyroscope.core.models import GoldenDocument
 from gyroscope.quality.metrics import assemble_report
+
+_CHUNK_ID_RE = re.compile(r'<<CHUNK id="([^"]+)"')
 
 
 class FakeLLM:
@@ -55,7 +55,7 @@ class FakeLLM:
             "judge": cfg.temperature_critic,
         }[role]
 
-    async def __aenter__(self) -> "FakeLLM":
+    async def __aenter__(self) -> FakeLLM:
         return self
 
     async def __aexit__(self, *exc: object) -> None:
@@ -131,7 +131,12 @@ class FakeLLM:
         if "critic" in hl or "score" in hl:
             return {"score": 0.85, "notes": "Faithful to golden, format OK."}
         if "persona" in hl:
-            return {"name": "Junior Surveyor", "description": "Recent graduate.", "expertise_level": "novice", "tone": "polite"}
+            return {
+                "name": "Junior Surveyor",
+                "description": "Recent graduate.",
+                "expertise_level": "novice",
+                "tone": "polite",
+            }
         return {"ok": True}
 
     def _infer_array(self, hint: str, user: str = "") -> list[Any]:
@@ -189,16 +194,47 @@ class FakeLLM:
             ]
         if "KNOWLEDGE objects" in h:
             return [
-                {"statement": "NRM2 is the RICS detailed measurement standard.", "citations": [cid_a], "tags": ["nrm"]},
-                {"statement": "JCT and NEC are dominant UK contract families.", "citations": [cid_b], "tags": ["contracts"]},
-                {"statement": "A Compensation Event is the NEC change mechanism.", "citations": [cid_b], "tags": ["nec"]},
-                {"statement": "RICS Rules of Conduct (2022) replaced the older rules.", "citations": [cid_a], "tags": ["ethics"]},
+                {
+                    "statement": "NRM2 is the RICS detailed measurement standard.",
+                    "citations": [cid_a],
+                    "tags": ["nrm"],
+                },
+                {
+                    "statement": "JCT and NEC are dominant UK contract families.",
+                    "citations": [cid_b],
+                    "tags": ["contracts"],
+                },
+                {
+                    "statement": "A Compensation Event is the NEC change mechanism.",
+                    "citations": [cid_b],
+                    "tags": ["nec"],
+                },
+                {
+                    "statement": "RICS Rules of Conduct (2022) replaced the older rules.",
+                    "citations": [cid_a],
+                    "tags": ["ethics"],
+                },
             ]
         if "VOCABULARY objects" in h:
             return [
-                {"term": "BoQ", "definition": "Bill of Quantities", "aliases": ["bill of quantities"], "source_chunk_ids": [cid_a]},
-                {"term": "Prelims", "definition": "Preliminaries — site setup costs", "aliases": [], "source_chunk_ids": [cid_a]},
-                {"term": "WIP", "definition": "Work in place", "aliases": [], "source_chunk_ids": [cid_b]},
+                {
+                    "term": "BoQ",
+                    "definition": "Bill of Quantities",
+                    "aliases": ["bill of quantities"],
+                    "source_chunk_ids": [cid_a],
+                },
+                {
+                    "term": "Prelims",
+                    "definition": "Preliminaries — site setup costs",
+                    "aliases": [],
+                    "source_chunk_ids": [cid_a],
+                },
+                {
+                    "term": "WIP",
+                    "definition": "Work in place",
+                    "aliases": [],
+                    "source_chunk_ids": [cid_b],
+                },
             ]
         if "ANTI-PATTERN objects" in h:
             return [
@@ -212,7 +248,12 @@ class FakeLLM:
         hl = h.lower()
         if "persona" in hl:
             return [
-                {"name": f"Persona {i}", "description": "Stakeholder", "expertise_level": "intermediate", "tone": "neutral"}
+                {
+                    "name": f"Persona {i}",
+                    "description": "Stakeholder",
+                    "expertise_level": "intermediate",
+                    "tone": "neutral",
+                }
                 for i in range(8)
             ]
         if "scenario" in hl:

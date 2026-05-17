@@ -9,7 +9,6 @@ pass, and (c) the report/history files land on disk.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -83,9 +82,7 @@ def _traj(idx: int, procedure_id: str, *, golden_text: str = "") -> Trajectory:
 
 def _good_rewards() -> list[RewardSpec]:
     return [
-        RewardSpec(
-            name="r_safety", kind=RewardKind.SAFETY, description="x", weight=1.0
-        ),
+        RewardSpec(name="r_safety", kind=RewardKind.SAFETY, description="x", weight=1.0),
         RewardSpec(
             name="r_principle",
             kind=RewardKind.PRINCIPLE,
@@ -128,16 +125,16 @@ async def test_runner_passes_first_iteration_when_axes_pass(
     eval_ = [_traj(99, "PRC-0099")]
     rewards = _good_rewards()
 
-    async def fake_ingest(self, client):  # noqa: ANN001, ARG001
+    async def fake_ingest(self, client):
         return docs
 
-    async def fake_curate(self, documents, client):  # noqa: ANN001, ARG001
+    async def fake_curate(self, documents, client):
         return golden
 
-    async def fake_sft(self, golden, client):  # noqa: ANN001, ARG001
+    async def fake_sft(self, golden, client):
         return train, eval_
 
-    async def fake_rewards(self, golden, client):  # noqa: ANN001, ARG001
+    async def fake_rewards(self, golden, client):
         return rewards
 
     class FakeLLM:
@@ -184,20 +181,20 @@ async def test_runner_retries_failing_phase_then_passes(
 
     call_state = {"sft_calls": 0, "rewards_calls": 0, "curate_calls": 0}
 
-    async def fake_ingest(self, client):  # noqa: ANN001, ARG001
+    async def fake_ingest(self, client):
         return docs
 
-    async def fake_curate(self, documents, client):  # noqa: ANN001, ARG001
+    async def fake_curate(self, documents, client):
         call_state["curate_calls"] += 1
         return golden
 
-    async def fake_sft(self, golden, client):  # noqa: ANN001, ARG001
+    async def fake_sft(self, golden, client):
         call_state["sft_calls"] += 1
         if call_state["sft_calls"] == 1:
             return bad_train, [_traj(99, "PRC-0099")]
         return good_train, [_traj(99, "PRC-0099")]
 
-    async def fake_rewards(self, golden, client):  # noqa: ANN001, ARG001
+    async def fake_rewards(self, golden, client):
         call_state["rewards_calls"] += 1
         return _good_rewards()
 
@@ -242,9 +239,7 @@ async def test_runner_retries_failing_phase_then_passes(
     # The final iteration crossed the threshold on every axis.
     assert runner.history[-1].report.all_pass(runner.threshold), (
         "expected all axes >= threshold on the final iteration; got "
-        + ", ".join(
-            f"{n}={a.score:.1f}" for n, a in runner.history[-1].report.axes.items()
-        )
+        + ", ".join(f"{n}={a.score:.1f}" for n, a in runner.history[-1].report.axes.items())
     )
 
 
@@ -264,20 +259,18 @@ async def test_runner_stops_at_max_iterations(
         knowledge=[],
     )
 
-    async def fake_ingest(self, client):  # noqa: ANN001, ARG001
+    async def fake_ingest(self, client):
         return docs
 
-    async def fake_curate(self, documents, client):  # noqa: ANN001, ARG001
+    async def fake_curate(self, documents, client):
         return bad_golden
 
-    async def fake_sft(self, golden, client):  # noqa: ANN001, ARG001
+    async def fake_sft(self, golden, client):
         bad = _traj(0, "PRC-0001")
         return [bad.model_copy(update={"id": f"TRJ-{i:04d}"}) for i in range(5)], []
 
-    async def fake_rewards(self, golden, client):  # noqa: ANN001, ARG001
-        return [
-            RewardSpec(name="r1", kind=RewardKind.LEXICAL, description="x", config={})
-        ]
+    async def fake_rewards(self, golden, client):
+        return [RewardSpec(name="r1", kind=RewardKind.LEXICAL, description="x", config={})]
 
     class FakeLLM:
         def __init__(self, cfg):

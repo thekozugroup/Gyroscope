@@ -118,7 +118,5 @@ class GyroscopeConfig(BaseModel):
     def resolved_api_key(self) -> str:
         key = self.api_key or os.environ.get("ANTHROPIC_API_KEY")
         if not key:
-            raise RuntimeError(
-                "ANTHROPIC_API_KEY is not set. Pass api_key= or export the env var."
-            )
+            raise RuntimeError("ANTHROPIC_API_KEY is not set. Pass api_key= or export the env var.")
         return key

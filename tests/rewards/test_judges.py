@@ -82,9 +82,7 @@ class _StubAnthropic:
         self.messages = _StubMessages(payloads)
 
 
-def _install_stub(
-    monkeypatch: pytest.MonkeyPatch, payloads: list[str]
-) -> dict[str, Any]:
+def _install_stub(monkeypatch: pytest.MonkeyPatch, payloads: list[str]) -> dict[str, Any]:
     captured: dict[str, Any] = {}
 
     def factory(api_key: str) -> _StubAnthropic:
@@ -102,9 +100,7 @@ class TestLLMJudgeWithStubbedClient:
     def test_invokes_sync_messages_create_with_expected_args(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        captured = _install_stub(
-            monkeypatch, ['{"score": 0.9}', '{"score": 0.1}']
-        )
+        captured = _install_stub(monkeypatch, ['{"score": 0.9}', '{"score": 0.1}'])
         judge = LLMJudge(api_key="sk-test", model="claude-test")
 
         result = judge(["p1", "p2"], ["c1", "c2"], criterion="be helpful")
@@ -129,41 +125,31 @@ class TestLLMJudgeWithStubbedClient:
         judge = LLMJudge()
 
         with caplog.at_level("WARNING", logger="gyroscope.rewards.judges"):
-            result = judge(
-                ["q"], ["alpha beta [KNW-1]"], criterion="alpha beta"
-            )
+            result = judge(["q"], ["alpha beta [KNW-1]"], criterion="alpha beta")
         # Heuristic = 0.7 * 1.0 + 0.3 * 1.0 = 1.0
         assert result == [pytest.approx(1.0)]
-        warnings = [
-            r for r in caplog.records if "falling back" in r.getMessage()
-        ]
+        warnings = [r for r in caplog.records if "falling back" in r.getMessage()]
         assert len(warnings) == 1
 
     def test_custom_fallback_used(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
         sentinel = [0.5, 0.5]
 
-        def fallback(
-            prompts: Any, completions: Any, *, criterion: str
-        ) -> list[float]:
+        def fallback(prompts: Any, completions: Any, *, criterion: str) -> list[float]:
             return sentinel
 
         judge = LLMJudge(fallback=fallback)
         out = judge(["a", "b"], ["x", "y"], criterion="z")
         assert out == sentinel
 
-    def test_empty_completions_short_circuits(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_empty_completions_short_circuits(self, monkeypatch: pytest.MonkeyPatch) -> None:
         captured = _install_stub(monkeypatch, [])
         judge = LLMJudge(api_key="sk-test")
         result = judge([], [], criterion="anything")
         assert result == []
         assert "client" not in captured  # client never built
 
-    def test_pads_short_score_list(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_pads_short_score_list(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # Two completions but only one parseable response — the second
         # call returns an unusable payload (we still consider it a success
         # because the client responded, score parses to 0.0).
@@ -172,9 +158,7 @@ class TestLLMJudgeWithStubbedClient:
         result = judge(["a", "b"], ["c", "d"], criterion="crit")
         assert result == [pytest.approx(0.6), 0.0]
 
-    def test_resolves_model_from_config(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_resolves_model_from_config(self, monkeypatch: pytest.MonkeyPatch) -> None:
         captured = _install_stub(monkeypatch, ['{"score": 0.4}'])
 
         class _Rewards:

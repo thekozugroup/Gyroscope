@@ -132,9 +132,7 @@ def _prioritise(
     breaking ties by original order so the result remains deterministic."""
     if cap <= 0 or len(items) <= cap:
         return list(items)
-    decorated = [
-        (-len(getattr(item, citation_key) or []), i, item) for i, item in enumerate(items)
-    ]
+    decorated = [(-len(getattr(item, citation_key) or []), i, item) for i, item in enumerate(items)]
     decorated.sort(key=lambda t: (t[0], t[1]))
     return [item for _, _, item in decorated[:cap]]
 
@@ -168,9 +166,7 @@ async def synthesize(
         citations_attr="source_chunk_ids",
         threshold=dedup_threshold,
     )
-    principles = _prioritise(
-        principles, citation_key="source_chunk_ids", cap=cfg.max_principles
-    )
+    principles = _prioritise(principles, citation_key="source_chunk_ids", cap=cfg.max_principles)
     principles = _renumber(list(principles), prefix="PRN")
 
     # Procedures: dedup by (name, len(steps)) preserving order, then cap by
@@ -183,9 +179,7 @@ async def synthesize(
             continue
         seen_proc.add(key)
         deduped_procs.append(proc)
-    procedures = _prioritise(
-        deduped_procs, citation_key="source_chunk_ids", cap=cfg.max_procedures
-    )
+    procedures = _prioritise(deduped_procs, citation_key="source_chunk_ids", cap=cfg.max_procedures)
     procedures = _renumber(list(procedures), prefix="PRC")
 
     # Knowledge dedup + cap + renumber.
@@ -195,9 +189,7 @@ async def synthesize(
         citations_attr="citations",
         threshold=dedup_threshold,
     )
-    knowledge = _prioritise(
-        knowledge, citation_key="citations", cap=cfg.max_knowledge_items
-    )
+    knowledge = _prioritise(knowledge, citation_key="citations", cap=cfg.max_knowledge_items)
     knowledge = _renumber(list(knowledge), prefix="KNW")
 
     # Vocabulary dedup. No cap requested by spec.
@@ -207,10 +199,10 @@ async def synthesize(
     seen_anti: set[str] = set()
     deduped_anti: list[AntiPattern] = []
     for ap in extracts.anti_patterns:
-        key = ap.description.strip().lower()
-        if not key or key in seen_anti:
+        desc_key = ap.description.strip().lower()
+        if not desc_key or desc_key in seen_anti:
             continue
-        seen_anti.add(key)
+        seen_anti.add(desc_key)
         deduped_anti.append(ap)
     anti_patterns = _renumber(list(deduped_anti), prefix="ANT")
 
@@ -229,9 +221,7 @@ async def synthesize(
     # phase. Fail loudly so a misconfigured corpus does not silently produce
     # a degenerate dataset.
     if len(golden.identity.role) == 0 or (
-        len(golden.principles) == 0
-        and len(golden.procedures) == 0
-        and len(golden.knowledge) == 0
+        len(golden.principles) == 0 and len(golden.procedures) == 0 and len(golden.knowledge) == 0
     ):
         raise EmptyBoKError(
             "Synthesizer produced no extractable content: "

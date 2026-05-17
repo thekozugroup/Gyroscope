@@ -115,9 +115,7 @@ async def test_web_loader_with_respx_full_stack() -> None:
     respx.get("https://example.com/robots.txt").mock(
         return_value=httpx.Response(404, text="not found")
     )
-    respx.get("https://example.com/").mock(
-        return_value=httpx.Response(200, html=HTML_HOME)
-    )
+    respx.get("https://example.com/").mock(return_value=httpx.Response(200, html=HTML_HOME))
 
     loader = WebLoader(max_depth=0, max_pages=1, respect_robots=True)
     docs = await loader.load("https://example.com/")
@@ -129,9 +127,7 @@ async def test_web_loader_with_respx_full_stack() -> None:
 @pytest.mark.asyncio
 async def test_web_loader_respects_robots_disallow() -> None:
     robots = "User-agent: *\nDisallow: /private/\n"
-    respx.get("https://example.com/robots.txt").mock(
-        return_value=httpx.Response(200, text=robots)
-    )
+    respx.get("https://example.com/robots.txt").mock(return_value=httpx.Response(200, text=robots))
 
     loader = WebLoader(max_depth=0, max_pages=1, respect_robots=True)
     # Should not attempt the disallowed URL — fetch would otherwise need a mock.
@@ -156,9 +152,7 @@ async def test_web_loader_can_load_only_urls() -> None:
 @pytest.mark.asyncio
 async def test_robots_future_is_reused_under_concurrent_fetches() -> None:
     """Concurrent fetches for the same host trigger one robots.txt fetch."""
-    loader = WebLoader(
-        max_depth=0, max_pages=3, respect_robots=True, concurrency=4
-    )
+    loader = WebLoader(max_depth=0, max_pages=3, respect_robots=True, concurrency=4)
     fetch_counts: dict[str, int] = {"robots": 0}
     robots_gate = asyncio.Event()
     robots_release = asyncio.Event()
@@ -205,27 +199,19 @@ async def test_robots_future_is_reused_under_concurrent_fetches() -> None:
 async def test_redirect_to_off_host_is_refused_and_warned(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    respx.get("https://example.com/robots.txt").mock(
-        return_value=httpx.Response(404, text="")
-    )
+    respx.get("https://example.com/robots.txt").mock(return_value=httpx.Response(404, text=""))
     respx.get("https://example.com/").mock(
-        return_value=httpx.Response(
-            302, headers={"Location": "https://other.example.org/"}
-        )
+        return_value=httpx.Response(302, headers={"Location": "https://other.example.org/"})
     )
     # If the off-host target were followed, this route would be hit — we
     # don't register it, so a follow would result in an unmatched-request
     # error from respx (which is itself a failure mode).
 
-    loader = WebLoader(
-        max_depth=0, max_pages=1, respect_robots=True, same_host_only=True
-    )
+    loader = WebLoader(max_depth=0, max_pages=1, respect_robots=True, same_host_only=True)
     with caplog.at_level("WARNING", logger="gyroscope.ingestion.web"):
         docs = await loader.load("https://example.com/")
     assert docs == []
-    assert any(
-        "off-host redirect" in r.getMessage() for r in caplog.records
-    )
+    assert any("off-host redirect" in r.getMessage() for r in caplog.records)
 
 
 @respx.mock
@@ -233,40 +219,26 @@ async def test_redirect_to_off_host_is_refused_and_warned(
 async def test_redirect_to_loopback_is_refused(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    respx.get("https://example.com/robots.txt").mock(
-        return_value=httpx.Response(404, text="")
-    )
+    respx.get("https://example.com/robots.txt").mock(return_value=httpx.Response(404, text=""))
     respx.get("https://example.com/").mock(
-        return_value=httpx.Response(
-            302, headers={"Location": "http://127.0.0.1:8080/admin"}
-        )
+        return_value=httpx.Response(302, headers={"Location": "http://127.0.0.1:8080/admin"})
     )
 
-    loader = WebLoader(
-        max_depth=0, max_pages=1, respect_robots=True, same_host_only=True
-    )
+    loader = WebLoader(max_depth=0, max_pages=1, respect_robots=True, same_host_only=True)
     with caplog.at_level("WARNING", logger="gyroscope.ingestion.web"):
         docs = await loader.load("https://example.com/")
     assert docs == []
-    assert any(
-        "blocked host" in r.getMessage() for r in caplog.records
-    )
+    assert any("blocked host" in r.getMessage() for r in caplog.records)
 
 
 @respx.mock
 @pytest.mark.asyncio
 async def test_redirect_within_same_host_is_followed() -> None:
-    respx.get("https://example.com/robots.txt").mock(
-        return_value=httpx.Response(404, text="")
-    )
+    respx.get("https://example.com/robots.txt").mock(return_value=httpx.Response(404, text=""))
     respx.get("https://example.com/").mock(
-        return_value=httpx.Response(
-            301, headers={"Location": "https://example.com/landing"}
-        )
+        return_value=httpx.Response(301, headers={"Location": "https://example.com/landing"})
     )
-    respx.get("https://example.com/landing").mock(
-        return_value=httpx.Response(200, html=HTML_HOME)
-    )
+    respx.get("https://example.com/landing").mock(return_value=httpx.Response(200, html=HTML_HOME))
 
     loader = WebLoader(max_depth=0, max_pages=1, respect_robots=True)
     docs = await loader.load("https://example.com/")

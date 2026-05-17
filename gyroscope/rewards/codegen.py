@@ -254,7 +254,7 @@ def _render_init_py(bundle: RewardBundle) -> str:
         "",
         "from .rewards import REWARDS, WEIGHTS",
         "",
-        "__all__ = [\"REWARDS\", \"WEIGHTS\"]",
+        '__all__ = ["REWARDS", "WEIGHTS"]',
         "",
         f"BUNDLE_VERSION = {bundle.version!r}",
         f"GOLDEN_ROLE = {bundle.golden_role!r}",

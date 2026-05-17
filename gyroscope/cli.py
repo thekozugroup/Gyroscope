@@ -17,14 +17,14 @@ import asyncio
 import json
 import logging
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated
 
 import typer
 from rich.console import Console
 from rich.table import Table
 
 from gyroscope.core.config import GyroscopeConfig
-from gyroscope.core.io import read_jsonl, write_jsonl, write_yaml
+from gyroscope.core.io import read_jsonl, write_jsonl
 from gyroscope.core.logging import setup_logging
 from gyroscope.core.models import Document, GoldenDocument, RewardSpec, Trajectory
 
@@ -126,7 +126,7 @@ def curate(
 @app.command()
 def sft(
     run: Annotated[Path, typer.Option("--run", "-r")],
-    n_trajectories: Annotated[Optional[int], typer.Option()] = None,
+    n_trajectories: Annotated[int | None, typer.Option()] = None,
     log_level: Annotated[str, typer.Option()] = "INFO",
 ) -> None:
     """Generate the SFT dataset from the golden document."""
@@ -151,7 +151,7 @@ def sft(
 @app.command()
 def rewards(
     run: Annotated[Path, typer.Option("--run", "-r")],
-    budget: Annotated[Optional[int], typer.Option("--budget", "-b")] = None,
+    budget: Annotated[int | None, typer.Option("--budget", "-b")] = None,
     log_level: Annotated[str, typer.Option()] = "INFO",
 ) -> None:
     """Design and emit reward functions from the golden document."""
@@ -227,14 +227,46 @@ def run(
     output: Annotated[Path, typer.Option("--output", "-o")],
     n_trajectories: Annotated[int, typer.Option()] = 1000,
     reward_budget: Annotated[int, typer.Option()] = 12,
+    threshold: Annotated[float, typer.Option(help="Quality threshold per axis.")] = 95.0,
+    max_iterations: Annotated[
+        int, typer.Option(help="Maximum autonomous-fix iterations after the initial run.")
+    ] = 5,
     log_level: Annotated[str, typer.Option()] = "INFO",
 ) -> None:
-    """End-to-end: ingest → curate → sft → rewards → report."""
-    ingest(input_=input_, output=output, log_level=log_level)
-    curate(run=output, log_level=log_level)
-    sft(run=output, n_trajectories=n_trajectories, log_level=log_level)
-    rewards(run=output, budget=reward_budget, log_level=log_level)
-    report(run=output, log_level=log_level)
+    """End-to-end run driven by :class:`AutonomousRunner`.
+
+    Ingests the inputs, distills the golden document, generates the SFT
+    dataset, designs the reward functions, and re-runs any failing phase
+    until every quality axis crosses ``--threshold`` or ``--max-iterations``
+    is exhausted. Reports land in ``<output>/report.{md,html,json}``.
+    """
+    setup_logging(log_level)
+    from gyroscope.runner import AutonomousRunner
+
+    cfg = GyroscopeConfig(input_paths=list(input_), output_dir=output)
+    cfg.sft.n_trajectories = n_trajectories
+    cfg.rewards.reward_budget = reward_budget
+    cfg.log_level = log_level
+    _save_config(cfg, output)
+
+    runner = AutonomousRunner(cfg, threshold=threshold, max_iterations=max_iterations)
+    asyncio.run(runner.run())
+
+    final_report = runner.history[-1].report
+    table = Table(title=f"Quality Report — overall {final_report.overall():.1f} / 100")
+    table.add_column("Axis")
+    table.add_column("Score", justify="right")
+    table.add_column("Status")
+    for name, axis in final_report.axes.items():
+        status = "[green]PASS[/green]" if axis.passed(threshold) else "[red]FAIL[/red]"
+        table.add_row(name, f"{axis.score:.1f}", status)
+    console.print(table)
+    console.print(
+        f"[bold]{len(runner.history)}[/bold] iteration(s); "
+        f"history at [cyan]{output / 'history.json'}[/cyan]"
+    )
+    if not final_report.all_pass(threshold):
+        raise typer.Exit(code=1)
 
 
 if __name__ == "__main__":

@@ -42,20 +42,35 @@ gyroscope run \
   --input ./bok/ \
   --output ./runs/rics_quantity_surveying \
   --n-trajectories 5000 \
-  --reward-budget 12
+  --reward-budget 12 \
+  --threshold 95 \
+  --max-iterations 5
 ```
+
+`run` is driven by the `AutonomousRunner`: it grades the outputs against
+five deterministic axes (coverage, faithfulness, diversity, trainability,
+reward soundness) and re-runs any phase whose axis fell below `--threshold`
+up to `--max-iterations` times. The per-phase subcommands (`ingest`,
+`curate`, `sft`, `rewards`, `report`) remain available for resumability.
 
 Output:
 
 ```
 runs/rics_quantity_surveying/
+├── documents.jsonl        # normalised source documents
 ├── golden.md              # distilled body of knowledge
-├── sft.jsonl              # SFT dataset (ShareGPT)
-├── eval.jsonl             # held-out evaluation set
+├── golden.json            # same, machine-readable
+├── sft.jsonl              # SFT dataset (ShareGPT by default)
+├── eval.jsonl             # held-out evaluation set (procedure-disjoint)
 ├── rewards/
 │   ├── rewards.py         # importable reward callables
+│   ├── _lib.py            # self-contained runtime primitives
+│   ├── __init__.py        # exposes REWARDS, WEIGHTS
 │   └── reward_spec.yaml   # declarative spec
-└── report.html            # quality report from critic agents
+├── history.json           # per-iteration axis scores
+├── report.md              # human-readable quality report
+├── report.html            # self-contained HTML report
+└── report.json            # machine-readable report
 ```
 
 ## Status

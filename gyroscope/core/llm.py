@@ -46,9 +46,7 @@ logger = logging.getLogger(__name__)
 # HTTP status codes that represent transient server-side conditions worth
 # retrying. 4xx codes that indicate client error (400 / 401 / 403 / 404 / 422)
 # are intentionally absent — retrying them just wastes tokens.
-_RETRYABLE_STATUS_CODES: frozenset[int] = frozenset(
-    {408, 409, 425, 429, 500, 502, 503, 504, 529}
-)
+_RETRYABLE_STATUS_CODES: frozenset[int] = frozenset({408, 409, 425, 429, 500, 502, 503, 504, 529})
 
 # Optional: APITimeoutError may not exist on older SDK versions.
 _APITimeoutError: type[BaseException] | None = getattr(anthropic, "APITimeoutError", None)
@@ -114,9 +112,7 @@ class LLMClient:
             return cfg.critic_model
         if role == "judge":
             return cfg.judge_model
-        raise ValueError(
-            f"Unknown LLM role {role!r}; expected one of {sorted(_VALID_ROLES)}."
-        )
+        raise ValueError(f"Unknown LLM role {role!r}; expected one of {sorted(_VALID_ROLES)}.")
 
     def temperature_for(self, role: str) -> float:
         """Return the configured sampling temperature for ``role``.
@@ -134,9 +130,7 @@ class LLMClient:
             return cfg.temperature_critic
         if role == "judge":
             return cfg.temperature_judge
-        raise ValueError(
-            f"Unknown LLM role {role!r}; expected one of {sorted(_VALID_ROLES)}."
-        )
+        raise ValueError(f"Unknown LLM role {role!r}; expected one of {sorted(_VALID_ROLES)}.")
 
     async def aclose(self) -> None:
         await self._client.close()
@@ -167,8 +161,8 @@ class LLMClient:
         async with self._sem:
             resp = await self._client.messages.create(
                 model=model,
-                system=system,
-                messages=messages,
+                system=system,  # type: ignore[arg-type]
+                messages=messages,  # type: ignore[arg-type]
                 max_tokens=max_tokens,
                 temperature=temperature,
             )
@@ -311,9 +305,7 @@ class LLMClient:
         except (ValueError, json.JSONDecodeError):
             if strict:
                 raise
-            logger.warning(
-                "complete_json failed to parse model output; returning default."
-            )
+            logger.warning("complete_json failed to parse model output; returning default.")
             return default
 
     async def complete_json_array(
@@ -347,9 +339,7 @@ class LLMClient:
         except (ValueError, json.JSONDecodeError):
             if strict:
                 raise
-            logger.warning(
-                "complete_json_array failed to parse model output; returning default."
-            )
+            logger.warning("complete_json_array failed to parse model output; returning default.")
             return default if default is not None else []
 
     # ---------- convenience: bounded parallel map ----------

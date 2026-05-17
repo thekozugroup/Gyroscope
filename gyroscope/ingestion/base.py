@@ -73,9 +73,7 @@ class LoaderRegistry:
         return None
 
     @classmethod
-    def discover(
-        cls, group: str = _DEFAULT_LOADER_ENTRY_POINT_GROUP
-    ) -> LoaderRegistry:
+    def discover(cls, group: str = _DEFAULT_LOADER_ENTRY_POINT_GROUP) -> LoaderRegistry:
         """Build a registry from installed ``importlib.metadata`` entry points.
 
         Each entry point in ``group`` (default ``"gyroscope.loaders"``) must
@@ -92,15 +90,13 @@ class LoaderRegistry:
             # Older importlib.metadata returned a dict-like object without
             # the ``group=`` keyword. We don't ship on that runtime, but
             # be defensive so plugin discovery never crashes the pipeline.
-            entry_points = importlib_metadata.entry_points().get(group, [])  # type: ignore[attr-defined]
+            entry_points = importlib_metadata.entry_points().get(group, [])  # type: ignore[arg-type]
         for ep in entry_points:
             try:
                 factory = ep.load()
                 loader = factory()
             except Exception:
-                logger.debug(
-                    "loader entry point %r failed to load", getattr(ep, "name", ep)
-                )
+                logger.debug("loader entry point %r failed to load", getattr(ep, "name", ep))
                 continue
             if not isinstance(loader, Loader):
                 logger.debug(

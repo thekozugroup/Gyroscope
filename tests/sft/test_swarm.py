@@ -27,9 +27,7 @@ def _persona(idx: int = 1) -> Persona:
     )
 
 
-def _make_scenario(
-    sid: str, *, procedure_id: str | None, seed: str = "default seed"
-) -> Scenario:
+def _make_scenario(sid: str, *, procedure_id: str | None, seed: str = "default seed") -> Scenario:
     return Scenario(
         id=sid,
         procedure_id=procedure_id,
@@ -144,9 +142,7 @@ async def test_run_swarm_is_leak_free_dedupes_and_writes_to_disk(monkeypatch, tm
     train_proc_ids = {pid for t in train for pid in t.tags.get("procedure_ids", [])}
     eval_proc_ids = {pid for t in evals for pid in t.tags.get("procedure_ids", [])}
     assert eval_proc_ids, "eval split should contain at least one trajectory"
-    assert train_proc_ids.isdisjoint(eval_proc_ids), (
-        f"leakage: {train_proc_ids & eval_proc_ids}"
-    )
+    assert train_proc_ids.isdisjoint(eval_proc_ids), f"leakage: {train_proc_ids & eval_proc_ids}"
 
     # --- dedup removed the duplicate ---
     # Built 8 trajectories total; one pair shares "alpha cake recipe please".
@@ -171,9 +167,7 @@ async def test_run_swarm_is_leak_free_dedupes_and_writes_to_disk(monkeypatch, tm
                 for i in range(1, 3)
             ]
         ],
-        json_responses=[
-            {"prompt_seed": f"unique-seed-{i}"} for i in range(8)
-        ],
+        json_responses=[{"prompt_seed": f"unique-seed-{i}"} for i in range(8)],
     )
     train_path, eval_path = await pipeline.run(golden, tmp_path, fake2, cfg)  # type: ignore[arg-type]
     assert train_path.exists() and train_path.name == "sft.jsonl"
@@ -209,9 +203,7 @@ async def test_run_swarm_returns_empty_when_all_below_threshold(monkeypatch) -> 
                 for i in range(1, 3)
             ]
         ],
-        json_responses=[
-            {"prompt_seed": f"easy seed {i}"} for i in range(4)
-        ],
+        json_responses=[{"prompt_seed": f"easy seed {i}"} for i in range(4)],
     )
 
     async def fake_build(
