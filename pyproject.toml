@@ -1,0 +1,67 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "gyroscope"
+version = "0.1.0"
+description = "Turn Body-of-Knowledge documents into SFT datasets and GRPO reward functions."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Kozu Group" }]
+keywords = ["llm", "sft", "grpo", "rlhf", "alignment", "dataset"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+]
+dependencies = [
+  "anthropic>=0.40.0",
+  "pydantic>=2.7",
+  "typer>=0.12",
+  "rich>=13.7",
+  "pyyaml>=6.0",
+  "pypdf>=4.2",
+  "pdfplumber>=0.11",
+  "trafilatura>=1.12",
+  "beautifulsoup4>=4.12",
+  "markdown-it-py>=3.0",
+  "python-docx>=1.1",
+  "datasketch>=1.6",
+  "httpx>=0.27",
+  "tenacity>=8.2",
+  "tiktoken>=0.7",
+  "jsonschema>=4.22",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.2",
+  "pytest-asyncio>=0.23",
+  "pytest-cov>=5.0",
+  "hypothesis>=6.100",
+  "ruff>=0.5",
+  "mypy>=1.10",
+]
+
+[project.scripts]
+gyroscope = "gyroscope.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["gyroscope"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "RUF", "SIM"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-markers --strict-config"
+testpaths = ["tests"]
+asyncio_mode = "auto"
