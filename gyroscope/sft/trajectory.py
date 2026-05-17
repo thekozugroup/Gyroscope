@@ -21,6 +21,7 @@ System-prompt design (cache-friendly):
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 from typing import Any
@@ -98,37 +99,65 @@ def set_prefix_cache_max(n: int) -> None:
 def _prefix_cache_key(golden: GoldenDocument) -> str:
     """Stable content fingerprint for the cache.
 
-    Hashes the role + every principle/procedure/knowledge/vocabulary/
-    anti-pattern id (plus the role mission). Two distinct objects with the
-    same content collapse to the same entry; two objects with the same
-    ``id()`` but different content do NOT collide.
+    Hashes every field that ``build_stable_system_prefix`` actually renders
+    into the prefix string. The fingerprint MUST be at least as wide as
+    the renderer's input — otherwise a mutation that changes the rendered
+    prefix but not the fingerprint would silently serve a stale cached
+    string. See the round-9 critique for the bug class this guards against.
     """
-    import hashlib
-
     h = hashlib.blake2b(digest_size=16)
+    _sep = b"\x00"
     h.update(golden.identity.role.encode("utf-8"))
-    h.update(b"\x00")
+    h.update(_sep)
+    h.update(golden.identity.description.encode("utf-8"))
+    h.update(_sep)
     h.update(golden.identity.mission.encode("utf-8"))
-    h.update(b"\x00")
+    h.update(_sep)
     for p in golden.principles:
         h.update(p.id.encode("utf-8"))
         h.update(b"|")
         h.update(p.statement.encode("utf-8"))
-        h.update(b"\x00")
+        h.update(_sep)
     for proc in golden.procedures:
         h.update(proc.id.encode("utf-8"))
         h.update(b"|")
         h.update(proc.name.encode("utf-8"))
-        h.update(b"\x00")
+        h.update(b"|")
+        h.update(proc.purpose.encode("utf-8"))
+        h.update(_sep)
+        for s in sorted(proc.steps, key=lambda x: x.order):
+            h.update(f"{s.order}|".encode())
+            h.update(s.action.encode("utf-8"))
+            h.update(_sep)
+        for pc in proc.preconditions:
+            h.update(b"pre|")
+            h.update(pc.encode("utf-8"))
+            h.update(_sep)
+        for pc in proc.postconditions:
+            h.update(b"post|")
+            h.update(pc.encode("utf-8"))
+            h.update(_sep)
     for k in golden.knowledge:
         h.update(k.id.encode("utf-8"))
-        h.update(b"\x00")
+        h.update(b"|")
+        h.update(k.statement.encode("utf-8"))
+        h.update(_sep)
     for v in golden.vocabulary:
         h.update(v.term.encode("utf-8"))
-        h.update(b"\x00")
+        h.update(b"|")
+        h.update(v.definition.encode("utf-8"))
+        h.update(b"|")
+        for alias in sorted(v.aliases):
+            h.update(alias.encode("utf-8"))
+            h.update(b",")
+        h.update(_sep)
     for a in golden.anti_patterns:
         h.update(a.id.encode("utf-8"))
-        h.update(b"\x00")
+        h.update(b"|")
+        h.update(a.description.encode("utf-8"))
+        h.update(b"|")
+        h.update(a.correction.encode("utf-8"))
+        h.update(_sep)
     return h.hexdigest()
 
 

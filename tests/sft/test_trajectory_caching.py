@@ -152,3 +152,170 @@ def test_prefix_cache_collapses_identical_distinct_instances() -> None:
 
     # Same content → same memoized string object (cache hit on second call).
     assert pa is pb, "content-keyed cache should hand out the same string for equal content"
+
+
+def test_prefix_cache_invalidates_on_procedure_step_mutation() -> None:
+    """If a procedure's steps change (not its id/name), the cached prefix
+    must be re-derived. Round-9 widened the fingerprint to cover this."""
+    from gyroscope.core.models import ProcedureStep
+    from gyroscope.sft.trajectory import build_stable_system_prefix
+
+    from .conftest import make_golden
+
+    g = make_golden()
+    # Replace the first procedure's step list with a unique-marker step.
+    proc = g.procedures[0]
+    proc.steps = [ProcedureStep(order=1, action="STEP-ORIGINAL unique marker")]
+    p1 = build_stable_system_prefix(g)
+    assert "STEP-ORIGINAL unique marker" in p1
+
+    # Mutate the step body in place — id/name unchanged.
+    proc.steps = [ProcedureStep(order=1, action="STEP-MUTATED other marker")]
+    p2 = build_stable_system_prefix(g)
+    assert "STEP-MUTATED other marker" in p2
+    assert "STEP-ORIGINAL unique marker" not in p2
+    assert p1 != p2
+
+
+def test_prefix_cache_invalidates_on_vocab_definition_mutation() -> None:
+    """If a vocabulary term's definition changes, the cached prefix must
+    be re-derived even though the term itself is unchanged."""
+    from gyroscope.core.models import VocabularyTerm
+    from gyroscope.sft.trajectory import build_stable_system_prefix
+
+    from .conftest import make_golden
+
+    g = make_golden()
+    g.vocabulary = [VocabularyTerm(term="X", definition="DEF-ORIGINAL")]
+    p1 = build_stable_system_prefix(g)
+    assert "DEF-ORIGINAL" in p1
+
+    g.vocabulary = [VocabularyTerm(term="X", definition="DEF-MUTATED")]
+    p2 = build_stable_system_prefix(g)
+    assert "DEF-MUTATED" in p2
+    assert "DEF-ORIGINAL" not in p2
+
+
+def test_prefix_cache_invalidates_on_anti_pattern_body_mutation() -> None:
+    """If an anti-pattern's description or correction changes, the cached
+    prefix must be re-derived even though the id is unchanged."""
+    from gyroscope.core.models import AntiPattern
+    from gyroscope.sft.trajectory import build_stable_system_prefix
+
+    from .conftest import make_golden
+
+    g = make_golden()
+    g.anti_patterns = [
+        AntiPattern(
+            id="ANT-0001",
+            description="ANTI-ORIGINAL desc",
+            why_bad="r",
+            correction="CORR-ORIGINAL fix",
+        )
+    ]
+    p1 = build_stable_system_prefix(g)
+    assert "ANTI-ORIGINAL desc" in p1
+    assert "CORR-ORIGINAL fix" in p1
+
+    g.anti_patterns = [
+        AntiPattern(
+            id="ANT-0001",
+            description="ANTI-MUTATED desc",
+            why_bad="r",
+            correction="CORR-MUTATED fix",
+        )
+    ]
+    p2 = build_stable_system_prefix(g)
+    assert "ANTI-MUTATED desc" in p2
+    assert "ANTI-ORIGINAL desc" not in p2
+
+
+def test_stream_swarm_primes_prefix_cache_exactly_once(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """`stream_swarm` must call `build_stable_system_prefix` before workers
+    start so they all hit the cache rather than racing to build the prefix.
+    """
+    import asyncio
+
+    from gyroscope.core.config import SFTConfig
+    from gyroscope.sft import swarm as swarm_mod
+    from gyroscope.sft import trajectory as trajectory_mod
+
+    from .conftest import make_golden
+
+    g = make_golden()
+    cfg = SFTConfig(n_trajectories=2, n_personas=1, difficulty_mix={"easy": 1.0})
+
+    call_count = {"n": 0}
+    real = trajectory_mod.build_stable_system_prefix
+
+    def counting(golden):  # type: ignore[no-untyped-def]
+        call_count["n"] += 1
+        return real(golden)
+
+    # `stream_swarm` imports build_stable_system_prefix locally, so patch
+    # the source module — the local import resolves to the patched object.
+    monkeypatch.setattr(trajectory_mod, "build_stable_system_prefix", counting)
+
+    from gyroscope.core.models import Persona, Scenario
+
+    async def _one_persona(*args, **kwargs):  # type: ignore[no-untyped-def]
+        return [Persona(id="PER-0001", name="P", description="d")]
+
+    async def _two_scenarios(*args, **kwargs):  # type: ignore[no-untyped-def]
+        return [
+            Scenario(
+                id=f"SCN-{i:04d}",
+                procedure_id=g.procedures[0].id,
+                principle_ids=[],
+                persona_id="PER-0001",
+                difficulty="easy",
+                prompt_seed=f"q {i}",
+            )
+            for i in range(2)
+        ]
+
+    # Stub _build_one so workers don't actually call build_trajectory (which
+    # would call build_stable_system_prefix internally and skew the count).
+    async def _stub_build_one(scenario, *args, **kwargs):  # type: ignore[no-untyped-def]
+        from gyroscope.core.models import Trajectory, TrajectoryMessage
+
+        return Trajectory(
+            id=f"TRJ-{scenario.id[-4:]}",
+            scenario_id=scenario.id,
+            system="s",
+            messages=[
+                TrajectoryMessage(role="user", content="u"),
+                TrajectoryMessage(role="assistant", content="a"),
+            ],
+            tags={"procedure_ids": [scenario.procedure_id], "difficulty": "easy"},
+            quality_score=0.9,
+        )
+
+    monkeypatch.setattr(swarm_mod, "generate_personas", _one_persona)
+    monkeypatch.setattr(swarm_mod, "generate_scenarios", _two_scenarios)
+    monkeypatch.setattr(swarm_mod, "_build_one", _stub_build_one)
+
+    class _FakeLLM:
+        @property
+        def config(self):  # type: ignore[no-untyped-def]
+            class _C:
+                class _L:
+                    max_concurrent = 2
+
+                llm = _L()
+
+            return _C()
+
+    async def drain():  # type: ignore[no-untyped-def]
+        async for _ in swarm_mod.stream_swarm(g, _FakeLLM(), cfg):
+            pass
+
+    asyncio.run(drain())
+
+    # The priming call must happen exactly once — workers never have to
+    # rebuild the prefix because _build_one is stubbed and would not call
+    # build_stable_system_prefix anyway. Two scenarios in flight, one
+    # priming call asserted: cache hit ratio is 100%.
+    assert call_count["n"] == 1, (
+        f"stream_swarm should prime the prefix exactly once; got {call_count['n']}"
+    )
