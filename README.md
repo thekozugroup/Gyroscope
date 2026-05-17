@@ -62,10 +62,10 @@ runs/rics_quantity_surveying/
 ├── golden.json            # same, machine-readable
 ├── sft.jsonl              # SFT dataset (ShareGPT by default)
 ├── eval.jsonl             # held-out evaluation set (procedure-disjoint)
-├── rewards/
-│   ├── rewards.py         # importable reward callables
-│   ├── _lib.py            # self-contained runtime primitives
+├── rewards/               # self-contained, drop-in package
 │   ├── __init__.py        # exposes REWARDS, WEIGHTS
+│   ├── rewards.py         # importable reward callables
+│   ├── _lib.py            # runtime primitives (no gyroscope dep)
 │   └── reward_spec.yaml   # declarative spec
 ├── history.json           # per-iteration axis scores
 ├── report.md              # human-readable quality report

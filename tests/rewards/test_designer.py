@@ -85,7 +85,7 @@ async def test_designer_emits_expected_kinds() -> None:
         principle_extras=["responses must include markdown sections"],
     )
     cfg = RewardConfig(reward_budget=20)
-    bundle = await design_rewards(golden, None, cfg)
+    bundle = await design_rewards(golden, config=cfg)
 
     kinds = {s.kind for s in bundle.specs}
     assert RewardKind.SAFETY in kinds
@@ -108,7 +108,7 @@ async def test_designer_emits_expected_kinds() -> None:
 async def test_designer_respects_budget_priority() -> None:
     golden = _make_golden(n_principles=8, n_procedures=3, n_anti_patterns=2)
     cfg = RewardConfig(reward_budget=3)
-    bundle = await design_rewards(golden, None, cfg)
+    bundle = await design_rewards(golden, config=cfg)
 
     assert len(bundle.specs) == 3
     kinds = {s.kind for s in bundle.specs}
@@ -127,7 +127,7 @@ async def test_designer_skips_excluded_kinds() -> None:
         reward_budget=20,
         include_kinds=["procedure", "safety"],
     )
-    bundle = await design_rewards(golden, None, cfg)
+    bundle = await design_rewards(golden, config=cfg)
     kinds = {s.kind for s in bundle.specs}
     assert kinds <= {RewardKind.PROCEDURE, RewardKind.SAFETY}
     assert RewardKind.PRINCIPLE not in kinds
@@ -138,7 +138,7 @@ async def test_designer_skips_excluded_kinds() -> None:
 async def test_principle_ids_propagated() -> None:
     golden = _make_golden(n_principles=5, n_procedures=0, n_anti_patterns=0, n_vocab=0)
     cfg = RewardConfig(reward_budget=20, include_kinds=["principle"])
-    bundle = await design_rewards(golden, None, cfg)
+    bundle = await design_rewards(golden, config=cfg)
 
     principle_ids = [pid for s in bundle.specs for pid in s.principle_ids]
     # Highest-weight principles should be selected.
@@ -152,7 +152,7 @@ async def test_principle_ids_propagated() -> None:
 async def test_unique_names() -> None:
     golden = _make_golden(n_procedures=3, n_principles=4)
     cfg = RewardConfig(reward_budget=20)
-    bundle = await design_rewards(golden, None, cfg)
+    bundle = await design_rewards(golden, config=cfg)
     names = [s.name for s in bundle.specs]
     counter = Counter(names)
     duplicates = [n for n, c in counter.items() if c > 1]
@@ -163,7 +163,7 @@ async def test_unique_names() -> None:
 async def test_no_anti_patterns_no_safety_reward() -> None:
     golden = _make_golden(n_anti_patterns=0)
     cfg = RewardConfig(reward_budget=20)
-    bundle = await design_rewards(golden, None, cfg)
+    bundle = await design_rewards(golden, config=cfg)
     kinds = {s.kind for s in bundle.specs}
     assert RewardKind.SAFETY not in kinds
 
@@ -179,6 +179,6 @@ async def test_priority_table_complete() -> None:
 async def test_golden_role_preserved() -> None:
     golden = _make_golden()
     cfg = RewardConfig(reward_budget=4)
-    bundle = await design_rewards(golden, None, cfg)
+    bundle = await design_rewards(golden, config=cfg)
     assert bundle.golden_role == golden.identity.role
     assert bundle.version == "1"

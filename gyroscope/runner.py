@@ -26,7 +26,7 @@ from gyroscope.core.io import write_jsonl
 from gyroscope.core.llm import LLMClient
 from gyroscope.core.models import Document, GoldenDocument, RewardSpec, Trajectory
 from gyroscope.quality.metrics import QualityReport, assemble_report
-from gyroscope.quality.report import render_report_html, render_report_markdown
+from gyroscope.quality.report import write_report_artefacts
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +38,18 @@ AXIS_TO_PHASES: dict[str, list[str]] = {
     "trainability": ["sft"],
     "reward_soundness": ["rewards"],
 }
+
+
+def register_axis_remediation(axis: str, phases: list[str]) -> None:
+    """Register the phases the autonomous runner should re-run when ``axis`` fails.
+
+    Plugins that add a new quality metric in :mod:`gyroscope.quality.metrics`
+    use this to declare which pipeline phase to re-run on failure without
+    monkey-patching the module-level :data:`AXIS_TO_PHASES`.
+    """
+    if not phases:
+        raise ValueError("phases must be a non-empty list")
+    AXIS_TO_PHASES[axis] = list(phases)
 
 
 @dataclass
@@ -113,7 +125,7 @@ class AutonomousRunner:
         from gyroscope.rewards.pipeline import RewardsPipeline
 
         bundle_path = await RewardsPipeline().run(
-            golden, self.config.output_dir, client, self.config.rewards
+            golden, self.config.output_dir, client, config=self.config.rewards
         )
         # Read the bundle back to return specs.
         from gyroscope.rewards.spec import RewardBundle
@@ -143,25 +155,35 @@ class AutonomousRunner:
         return failing_phases
 
     def _bump_config_for_retry(self, phase: str) -> None:
-        """Mutate config in-place to make the next attempt produce different output."""
+        """Mutate config in-place to make the next attempt produce different output.
+
+        Ceilings here are *soft* — a higher user-supplied baseline is never
+        reduced. Each bump is the larger of the current value and the
+        ``int(current * 1.5) + 1`` growth target, capped at the soft ceiling
+        only when the current value is at or below it.
+        """
+
+        def grow(current: int, growth_cap: int) -> int:
+            target = int(current * 1.5) + 1
+            return max(current, min(growth_cap, target))
+
         if phase == "curation":
-            # Loosen caps to capture more material.
-            self.config.curation.max_principles = min(
-                120, int(self.config.curation.max_principles * 1.5) + 1
-            )
-            self.config.curation.max_procedures = min(
-                80, int(self.config.curation.max_procedures * 1.5) + 1
-            )
-            self.config.curation.max_knowledge_items = min(
-                800, int(self.config.curation.max_knowledge_items * 1.5) + 1
+            self.config.curation.max_principles = grow(self.config.curation.max_principles, 120)
+            self.config.curation.max_procedures = grow(self.config.curation.max_procedures, 80)
+            self.config.curation.max_knowledge_items = grow(
+                self.config.curation.max_knowledge_items, 800
             )
         if phase == "sft":
             # Bump diversity: more personas, higher temperature, stricter critic.
-            self.config.sft.n_personas = min(24, self.config.sft.n_personas + 4)
+            self.config.sft.n_personas = max(
+                self.config.sft.n_personas, self.config.sft.n_personas + 4
+            )
             self.config.llm.temperature_swarm = min(1.0, self.config.llm.temperature_swarm + 0.1)
             self.config.sft.critic_min_score = min(0.9, self.config.sft.critic_min_score + 0.05)
         if phase == "rewards":
-            self.config.rewards.reward_budget = max(4, self.config.rewards.reward_budget + 2)
+            self.config.rewards.reward_budget = max(
+                self.config.rewards.reward_budget, self.config.rewards.reward_budget + 2
+            )
 
     async def run(self) -> RunArtefacts:
         """Run end-to-end, iterating failing phases until all axes pass or budget hits."""
@@ -235,10 +257,7 @@ class AutonomousRunner:
 
     def _write_report(self, report: QualityReport) -> None:
         run = self.config.output_dir
-        run.mkdir(parents=True, exist_ok=True)
-        (run / "report.md").write_text(render_report_markdown(report), encoding="utf-8")
-        (run / "report.html").write_text(render_report_html(report), encoding="utf-8")
-        (run / "report.json").write_text(json.dumps(report.to_dict(), indent=2), encoding="utf-8")
+        write_report_artefacts(report, run)
         history = [
             {
                 "iteration": h.iteration,

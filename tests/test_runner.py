@@ -242,6 +242,24 @@ async def test_runner_retries_failing_phase_then_passes(
         + ", ".join(f"{n}={a.score:.1f}" for n, a in runner.history[-1].report.axes.items())
     )
 
+    # --- history.json shape: every iteration carries a non-empty config
+    # snapshot, and a knob the sft-phase retry mutates actually differs
+    # between the initial and post-retry snapshots.
+    import json
+
+    history_payload = json.loads((cfg.output_dir / "history.json").read_text())
+    assert len(history_payload) == len(runner.history)
+    for entry in history_payload:
+        assert "config" in entry and isinstance(entry["config"], dict) and entry["config"], (
+            f"history entry missing non-empty 'config' snapshot: {entry!r}"
+        )
+        assert "sft" in entry["config"], "sft section missing from config snapshot"
+    # n_personas is bumped by _bump_config_for_retry on the sft phase.
+    assert (
+        history_payload[1]["config"]["sft"]["n_personas"]
+        > history_payload[0]["config"]["sft"]["n_personas"]
+    ), "sft retry should have bumped n_personas in the recorded snapshot"
+
 
 @pytest.mark.asyncio
 async def test_runner_stops_at_max_iterations(

@@ -20,7 +20,11 @@ from gyroscope.quality.metrics import (
     reward_soundness_score,
     trainability_score,
 )
-from gyroscope.quality.report import render_report_html, render_report_markdown
+from gyroscope.quality.report import (
+    render_report_html,
+    render_report_markdown,
+    write_report_artefacts,
+)
 
 __all__ = [
     "AxisScore",
@@ -32,4 +36,5 @@ __all__ = [
     "render_report_markdown",
     "reward_soundness_score",
     "trainability_score",
+    "write_report_artefacts",
 ]

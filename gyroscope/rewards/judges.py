@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import random
 import re
 import time
 from collections.abc import Sequence
@@ -339,7 +340,10 @@ class LLMJudge:
                 last_exc = exc
                 if not self._is_retryable(exc) or attempt == _MAX_ATTEMPTS - 1:
                     break
-                time.sleep(_BACKOFF_BASE * (2**attempt))
+                # Decorrelated jitter — prevents a synchronised burst of
+                # 429s across rollouts from all retrying on the same tick.
+                base = _BACKOFF_BASE * (2**attempt)
+                time.sleep(base * (0.5 + random.random()))
                 continue
             text = _extract_text(message)
             return _parse_score(text)

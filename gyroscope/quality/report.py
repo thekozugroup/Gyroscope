@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import html
 import json
+from pathlib import Path
 
 from gyroscope.quality.metrics import QualityReport
 
@@ -66,3 +67,21 @@ def render_report_html(report: QualityReport) -> str:
         f"<div class='axes'>{''.join(cards)}</div>"
         "</body></html>"
     )
+
+
+def write_report_artefacts(report: QualityReport, out_dir: Path | str) -> tuple[Path, Path, Path]:
+    """Write ``report.{md,html,json}`` into ``out_dir`` and return the paths.
+
+    Single shared writer used by both :class:`AutonomousRunner` and the
+    ``gyroscope report`` CLI so the on-disk filename convention and
+    serialisation format cannot drift between them.
+    """
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    md = out_dir / "report.md"
+    html_path = out_dir / "report.html"
+    json_path = out_dir / "report.json"
+    md.write_text(render_report_markdown(report), encoding="utf-8")
+    html_path.write_text(render_report_html(report), encoding="utf-8")
+    json_path.write_text(json.dumps(report.to_dict(), indent=2), encoding="utf-8")
+    return md, html_path, json_path

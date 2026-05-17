@@ -76,7 +76,7 @@ def _load_pkg(path: Path) -> object:
 async def test_pipeline_end_to_end(tmp_path: Path) -> None:
     pipeline = RewardsPipeline()
     cfg = RewardConfig(reward_budget=10)
-    rewards_path = await pipeline.run(_small_golden(), tmp_path, None, cfg)
+    rewards_path = await pipeline.run(_small_golden(), tmp_path, None, config=cfg)
 
     pkg = rewards_path.parent
     assert rewards_path.exists()
@@ -109,6 +109,6 @@ async def test_pipeline_end_to_end(tmp_path: Path) -> None:
 async def test_pipeline_respects_budget(tmp_path: Path) -> None:
     pipeline = RewardsPipeline()
     cfg = RewardConfig(reward_budget=2)
-    rewards_path = await pipeline.run(_small_golden(), tmp_path, None, cfg)
+    rewards_path = await pipeline.run(_small_golden(), tmp_path, None, config=cfg)
     module = _load_pkg(rewards_path)
     assert len(module.REWARDS) <= 2  # type: ignore[attr-defined]

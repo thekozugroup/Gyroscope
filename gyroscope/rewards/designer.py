@@ -328,10 +328,16 @@ def _enforce_budget(
 
 async def design_rewards(
     golden: GoldenDocument,
-    client: LLMClient | None,
+    client: LLMClient | None = None,
+    *,
     config: RewardConfig,
 ) -> RewardBundle:
-    """Produce a :class:`RewardBundle` for ``golden`` constrained by ``config``."""
+    """Produce a :class:`RewardBundle` for ``golden`` constrained by ``config``.
+
+    ``client`` is accepted for forward compatibility with a future
+    LLM-driven designer; this deterministic implementation does not use it.
+    """
+    del client  # not yet used
     include = set(config.include_kinds or [])
     judge_model = config.judge_model
 

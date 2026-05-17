@@ -14,7 +14,6 @@ be re-run from a previous artefact.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from pathlib import Path
 from typing import Annotated
@@ -127,16 +126,27 @@ def curate(
 def sft(
     run: Annotated[Path, typer.Option("--run", "-r")],
     n_trajectories: Annotated[int | None, typer.Option()] = None,
+    output_format: Annotated[
+        str | None,
+        typer.Option("--format", "-f", help="sharegpt | chatml | alpaca"),
+    ] = None,
     log_level: Annotated[str, typer.Option()] = "INFO",
 ) -> None:
     """Generate the SFT dataset from the golden document."""
     setup_logging(log_level)
     from gyroscope.core.llm import LLMClient
+    from gyroscope.sft.formats import FORMAT_WRITERS
     from gyroscope.sft.pipeline import SFTPipeline
 
     cfg = _load_config(run)
     if n_trajectories is not None:
         cfg.sft.n_trajectories = n_trajectories
+    if output_format is not None:
+        if output_format not in FORMAT_WRITERS:
+            raise typer.BadParameter(
+                f"Unknown format {output_format!r}; available: {sorted(FORMAT_WRITERS)}"
+            )
+        cfg.sft.output_format = output_format  # type: ignore[assignment]
     golden = _read_golden(run)
 
     async def _go() -> tuple[Path, Path]:
@@ -166,7 +176,7 @@ def rewards(
 
     async def _go() -> Path:
         async with LLMClient(cfg) as client:
-            return await RewardsPipeline().run(golden, run, client, cfg.rewards)
+            return await RewardsPipeline().run(golden, run, client, config=cfg.rewards)
 
     out = asyncio.run(_go())
     console.print(f"[green]Rewards[/green] -> {out}")
@@ -181,7 +191,7 @@ def report(
     """Compute and render the quality report for an existing run."""
     setup_logging(log_level)
     from gyroscope.quality.metrics import assemble_report
-    from gyroscope.quality.report import render_report_html, render_report_markdown
+    from gyroscope.quality.report import write_report_artefacts
 
     golden = _read_golden(run)
     docs = _read_documents(run / "documents.jsonl")
@@ -201,12 +211,7 @@ def report(
         reward_specs=specs,
     )
 
-    md_path = run / "report.md"
-    html_path = run / "report.html"
-    json_path = run / "report.json"
-    md_path.write_text(render_report_markdown(report), encoding="utf-8")
-    html_path.write_text(render_report_html(report), encoding="utf-8")
-    json_path.write_text(json.dumps(report.to_dict(), indent=2), encoding="utf-8")
+    write_report_artefacts(report, run)
 
     table = Table(title=f"Quality Report — overall {report.overall():.1f} / 100")
     table.add_column("Axis")
@@ -231,6 +236,10 @@ def run(
     max_iterations: Annotated[
         int, typer.Option(help="Maximum autonomous-fix iterations after the initial run.")
     ] = 5,
+    output_format: Annotated[
+        str | None,
+        typer.Option("--format", "-f", help="sharegpt | chatml | alpaca"),
+    ] = None,
     log_level: Annotated[str, typer.Option()] = "INFO",
 ) -> None:
     """End-to-end run driven by :class:`AutonomousRunner`.
@@ -242,10 +251,17 @@ def run(
     """
     setup_logging(log_level)
     from gyroscope.runner import AutonomousRunner
+    from gyroscope.sft.formats import FORMAT_WRITERS
 
     cfg = GyroscopeConfig(input_paths=list(input_), output_dir=output)
     cfg.sft.n_trajectories = n_trajectories
     cfg.rewards.reward_budget = reward_budget
+    if output_format is not None:
+        if output_format not in FORMAT_WRITERS:
+            raise typer.BadParameter(
+                f"Unknown format {output_format!r}; available: {sorted(FORMAT_WRITERS)}"
+            )
+        cfg.sft.output_format = output_format  # type: ignore[assignment]
     cfg.log_level = log_level
     _save_config(cfg, output)
 
