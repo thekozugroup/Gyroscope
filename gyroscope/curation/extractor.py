@@ -319,7 +319,21 @@ async def _run_batched_array(
             return []
         return [entry for entry in raw if isinstance(entry, dict)]
 
-    batch_results = await asyncio.gather(*(_run_one(batch) for batch in batches))
+    # ``return_exceptions=True`` so one batch failing (e.g. a transient API
+    # error that exhausts retries) does not poison the rest of the extractor.
+    # Each failed batch is logged + dropped; the remaining batches keep their
+    # output so the curation pipeline degrades gracefully.
+    raw_batch_results = await asyncio.gather(
+        *(_run_one(batch) for batch in batches),
+        return_exceptions=True,
+    )
+    batch_results: list[list[dict[str, Any]]] = []
+    for idx, item in enumerate(raw_batch_results):
+        if isinstance(item, BaseException):
+            logger.warning("Batched extractor: batch %d raised %s; dropping.", idx, item)
+            batch_results.append([])
+        else:
+            batch_results.append(item)
 
     results: list[dict[str, Any]] = []
     for entries in batch_results:

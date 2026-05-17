@@ -312,3 +312,67 @@ async def test_runner_stops_at_max_iterations(
     # current stub returning identical scores every iteration, the guard fires
     # after the first retry, so we assert "between 2 and budget+1 entries".
     assert 2 <= len(runner.history) <= 1 + runner.max_iterations
+
+
+@pytest.mark.asyncio
+async def test_runner_no_progress_guard_fires(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog
+) -> None:
+    """When an iteration produces no score progress on the same failing
+    phases, the loop must short-circuit with a WARNING and stop *before*
+    consuming the full max_iterations budget."""
+    cfg = GyroscopeConfig(
+        input_paths=[tmp_path / "x.txt"], output_dir=tmp_path / "run", api_key="test"
+    )
+    runner = AutonomousRunner(cfg, threshold=99.0, max_iterations=5)
+
+    docs = [Document(source="x.txt", kind=DocumentKind.TXT, text="hello")]
+    bad_golden = GoldenDocument(
+        identity=Identity(role="X", description="d", mission="m"),
+        principles=[Principle(id="PRN-0001", statement="x", source_chunk_ids=[])],
+        knowledge=[],
+    )
+
+    async def fake_ingest(self, client):
+        return docs
+
+    async def fake_curate(self, documents, client):
+        return bad_golden
+
+    async def fake_sft(self, golden, client):
+        bad = _traj(0, "PRC-0001")
+        return [bad.model_copy(update={"id": f"TRJ-{i:04d}"}) for i in range(5)], []
+
+    async def fake_rewards(self, golden, client):
+        return [RewardSpec(name="r1", kind=RewardKind.LEXICAL, description="x", config={})]
+
+    class FakeLLM:
+        def __init__(self, cfg):
+            self.cfg = cfg
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return None
+
+    monkeypatch.setattr(AutonomousRunner, "_phase_ingest", fake_ingest)
+    monkeypatch.setattr(AutonomousRunner, "_phase_curate", fake_curate)
+    monkeypatch.setattr(AutonomousRunner, "_phase_sft", fake_sft)
+    monkeypatch.setattr(AutonomousRunner, "_phase_rewards", fake_rewards)
+    monkeypatch.setattr("gyroscope.runner.LLMClient", FakeLLM)
+
+    import logging
+
+    caplog.set_level(logging.WARNING, logger="gyroscope.runner")
+
+    await runner.run()
+
+    # Loop terminated EARLY: history has fewer than the budget allows.
+    assert len(runner.history) < 1 + runner.max_iterations, (
+        f"no-progress guard did not fire; history grew to {len(runner.history)}"
+    )
+    # And the WARNING was logged.
+    assert any(
+        "made no progress" in r.message for r in caplog.records if r.levelno == logging.WARNING
+    ), "expected 'made no progress' warning in logs"

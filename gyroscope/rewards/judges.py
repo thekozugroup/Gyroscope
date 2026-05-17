@@ -326,6 +326,11 @@ class LLMJudge:
         user = _build_pair_prompt(prompt, completion)
         system_blocks = _build_system_blocks(criterion)
         last_exc: Exception | None = None
+        # Decorrelated-jitter state: `prev_sleep` carries the last slept
+        # duration so each retry samples uniformly in [base, prev*3] (capped
+        # at 60s). This matches the AWS pattern used on the async side and
+        # actually de-correlates retry timing across concurrent judges.
+        prev_sleep = _BACKOFF_BASE
         for attempt in range(_MAX_ATTEMPTS):
             try:
                 message = client.messages.create(
@@ -336,14 +341,12 @@ class LLMJudge:
                     messages=[{"role": "user", "content": user}],
                 )
             except Exception as exc:
-                # Retry any transient SDK failure that looks recoverable.
                 last_exc = exc
                 if not self._is_retryable(exc) or attempt == _MAX_ATTEMPTS - 1:
                     break
-                # Decorrelated jitter — prevents a synchronised burst of
-                # 429s across rollouts from all retrying on the same tick.
-                base = _BACKOFF_BASE * (2**attempt)
-                time.sleep(base * (0.5 + random.random()))
+                sleep_for = min(60.0, random.uniform(_BACKOFF_BASE, prev_sleep * 3))
+                time.sleep(sleep_for)
+                prev_sleep = sleep_for
                 continue
             text = _extract_text(message)
             return _parse_score(text)

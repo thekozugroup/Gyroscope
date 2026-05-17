@@ -72,7 +72,20 @@ def _selected_procedure(golden: GoldenDocument, scenario: Scenario) -> Procedure
     return None
 
 
+# LRU-style bounded cache keyed by id(golden). Bounded so a long-running
+# process that ingests many corpora cannot leak prefixes indefinitely. The
+# id() key is safe because callers reuse the same GoldenDocument instance
+# across all workers in a single run.
 _PREFIX_CACHE: dict[int, str] = {}
+_PREFIX_CACHE_MAX = 8
+
+
+def _prefix_cache_set(key: int, value: str) -> None:
+    if len(_PREFIX_CACHE) >= _PREFIX_CACHE_MAX:
+        # Drop the oldest entry — insertion order is preserved in py3.7+.
+        oldest = next(iter(_PREFIX_CACHE))
+        _PREFIX_CACHE.pop(oldest, None)
+    _PREFIX_CACHE[key] = value
 
 
 def build_stable_system_prefix(golden: GoldenDocument) -> str:
@@ -84,11 +97,12 @@ def build_stable_system_prefix(golden: GoldenDocument) -> str:
     are NOT included here — they go in the user turn via
     :func:`build_scenario_suffix`.
 
-    The result is memoized keyed by ``id(golden)`` — a run that builds N
-    trajectories sharing the same golden document pays the concatenation
-    cost ONCE and every worker hands the same immutable string object to
-    the Anthropic client (preserves prompt-cache reuse, avoids N copies
-    in scheduler memory).
+    The result is memoized in a small bounded cache keyed by ``id(golden)``,
+    so a run that builds N trajectories sharing the same golden document
+    pays the concatenation cost ONCE and every worker hands the same
+    immutable string object to the Anthropic client. The cache is capped
+    at :data:`_PREFIX_CACHE_MAX` entries so long-running processes that
+    rotate through many corpora cannot leak prefixes indefinitely.
     """
     cached = _PREFIX_CACHE.get(id(golden))
     if cached is not None:
@@ -138,7 +152,7 @@ def build_stable_system_prefix(golden: GoldenDocument) -> str:
         "- Ask a clarifying question only when essential."
     )
     result = "\n".join(parts)
-    _PREFIX_CACHE[id(golden)] = result
+    _prefix_cache_set(id(golden), result)
     return result
 
 
@@ -481,11 +495,17 @@ async def _critic_score(
         # critic doesn't have to re-derive context from the transcript.
         critic_system = _CRITIC_SYSTEM + "\n\n" + stable_system_prefix
     _ = golden  # golden content already lives in stable_system_prefix
+    # Only attach the ephemeral cache marker when the system block is large
+    # enough to be worth caching (Anthropic's minimum cacheable block is
+    # ~1024 tokens ≈ 4000 chars). Below that, marking is a guaranteed miss
+    # that just adds payload bytes. ``_CRITIC_SYSTEM`` alone is small; the
+    # combined `_CRITIC_SYSTEM + stable_system_prefix` is large.
+    cache_critic_system = stable_system_prefix is not None
     try:
         obj = await client.complete_json(
             system=critic_system,
             user=_critic_user_prompt(scenario_suffix, trajectory.messages),
-            cache_system=True,
+            cache_system=cache_critic_system,
             temperature=cfg.temperature_critic,
         )
     except Exception as exc:

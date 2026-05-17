@@ -52,6 +52,19 @@ def register_axis_remediation(axis: str, phases: list[str]) -> None:
     AXIS_TO_PHASES[axis] = list(phases)
 
 
+def unregister_axis_remediation(axis: str) -> bool:
+    """Remove a previously-registered axis remediation. Returns True on hit.
+
+    Useful for test teardown so registered fakes do not leak between tests.
+    """
+    return AXIS_TO_PHASES.pop(axis, None) is not None
+
+
+def axis_remediation_map() -> dict[str, tuple[str, ...]]:
+    """Read-only snapshot of the axis -> phases mapping."""
+    return {axis: tuple(phases) for axis, phases in AXIS_TO_PHASES.items()}
+
+
 @dataclass
 class IterationResult:
     iteration: int

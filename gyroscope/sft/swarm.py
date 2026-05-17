@@ -29,6 +29,7 @@ legacy shape (the autonomous runner, existing tests).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import re
 from collections.abc import AsyncIterator
@@ -291,32 +292,14 @@ async def _drain_split_concurrently(
                 w.cancel()
         if not completion_task.done():
             completion_task.cancel()
-        # Surface any pending exceptions without raising — workers already
-        # logged the underlying cause.
+        # Workers already logged their underlying cause; we only need to drain
+        # the tasks so they don't leak. CancelledError is the expected outcome
+        # of the cancel above and is silently suppressed.
         for w in workers:
-            with _suppress_cancelled():
-                await _await_silent(w)
-        with _suppress_cancelled():
-            await _await_silent(completion_task)
-
-
-class _suppress_cancelled:
-    """``contextlib.suppress(CancelledError)`` without the import overhead."""
-
-    def __enter__(self) -> None:
-        return None
-
-    def __exit__(self, exc_type: type[BaseException] | None, *_: object) -> bool:
-        return exc_type is not None and issubclass(exc_type, asyncio.CancelledError)
-
-
-async def _await_silent(task: asyncio.Task[None]) -> None:
-    try:
-        await task
-    except asyncio.CancelledError:
-        raise
-    except BaseException:  # best-effort cleanup; workers already logged
-        pass
+            with contextlib.suppress(BaseException):
+                await w
+        with contextlib.suppress(BaseException):
+            await completion_task
 
 
 async def stream_swarm(
