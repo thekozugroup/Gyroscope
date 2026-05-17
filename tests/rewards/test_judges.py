@@ -1,9 +1,12 @@
-"""Tests for the LLM judge adapter and the heuristic fallback."""
+"""Tests for the heuristic-judge fallback and the LLM judge wiring.
+
+These tests stay offline: they never construct a real Anthropic client and
+never hit the network.
+"""
 
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -53,85 +56,134 @@ class TestHeuristicJudge:
 
 
 # ---------------------------------------------------------------------------
-# LLMJudge — uses a mocked async client
+# LLMJudge — pure-sync wiring; the Anthropic client is stubbed.
 # ---------------------------------------------------------------------------
 
 
-def _make_mock_client(
-    *, scores: list[float] | None = None, exception: Exception | None = None
-) -> tuple[MagicMock, AsyncMock]:
-    client = MagicMock()
-    complete_json = AsyncMock()
-    if exception is not None:
-        complete_json.side_effect = exception
-    else:
-        complete_json.return_value = {"scores": scores or []}
-    client.complete_json = complete_json
-    return client, complete_json
+class _StubMessage:
+    def __init__(self, text: str) -> None:
+        self.content = [type("Block", (), {"text": text})()]
 
 
-def _make_config(judge_model: str | None = "claude-test") -> Any:
-    cfg = MagicMock()
-    cfg.rewards.judge_model = judge_model
-    cfg.llm.judge_model = "fallback-model"
-    return cfg
+class _StubMessages:
+    def __init__(self, payloads: list[str]) -> None:
+        self._payloads = list(payloads)
+        self.calls: list[dict[str, Any]] = []
+
+    def create(self, **kwargs: Any) -> _StubMessage:
+        self.calls.append(kwargs)
+        payload = self._payloads.pop(0) if self._payloads else '{"score": 0.0}'
+        return _StubMessage(payload)
 
 
-class TestLLMJudge:
-    def test_invokes_client_with_expected_args(self) -> None:
-        client, complete_json = _make_mock_client(scores=[0.9, 0.1])
-        cfg = _make_config()
-        judge = LLMJudge(client=client, config=cfg)
+class _StubAnthropic:
+    def __init__(self, *, api_key: str, payloads: list[str]) -> None:
+        self.api_key = api_key
+        self.messages = _StubMessages(payloads)
 
-        result = judge(["p1", "p2"], ["c1", "c2"], "be helpful")
+
+def _install_stub(
+    monkeypatch: pytest.MonkeyPatch, payloads: list[str]
+) -> dict[str, Any]:
+    captured: dict[str, Any] = {}
+
+    def factory(api_key: str) -> _StubAnthropic:
+        stub = _StubAnthropic(api_key=api_key, payloads=payloads)
+        captured["client"] = stub
+        return stub
+
+    import anthropic
+
+    monkeypatch.setattr(anthropic, "Anthropic", lambda api_key: factory(api_key))
+    return captured
+
+
+class TestLLMJudgeWithStubbedClient:
+    def test_invokes_sync_messages_create_with_expected_args(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        captured = _install_stub(
+            monkeypatch, ['{"score": 0.9}', '{"score": 0.1}']
+        )
+        judge = LLMJudge(api_key="sk-test", model="claude-test")
+
+        result = judge(["p1", "p2"], ["c1", "c2"], criterion="be helpful")
 
         assert result == [pytest.approx(0.9), pytest.approx(0.1)]
-        complete_json.assert_awaited_once()
-        kwargs = complete_json.await_args.kwargs
-        assert kwargs["model"] == "claude-test"
-        assert "be helpful" in kwargs["user"]
-        assert "c1" in kwargs["user"] and "c2" in kwargs["user"]
-        assert kwargs["temperature"] == 0.0
+        calls = captured["client"].messages.calls
+        assert len(calls) == 2
+        assert calls[0]["model"] == "claude-test"
+        assert calls[0]["temperature"] == 0.0
+        assert "be helpful" in calls[0]["messages"][0]["content"]
+        assert "c1" in calls[0]["messages"][0]["content"]
+        assert "c2" in calls[1]["messages"][0]["content"]
 
-    def test_falls_back_to_heuristic_on_client_error(self) -> None:
-        client, _ = _make_mock_client(exception=RuntimeError("nope"))
-        cfg = _make_config()
-        judge = LLMJudge(client=client, config=cfg)
+    def test_falls_back_to_heuristic_when_no_api_key(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        judge = LLMJudge()
 
-        result = judge(["q"], ["alpha beta [KNW-1]"], "alpha beta")
+        with caplog.at_level("WARNING", logger="gyroscope.rewards.judges"):
+            result = judge(
+                ["q"], ["alpha beta [KNW-1]"], criterion="alpha beta"
+            )
         # Heuristic = 0.7 * 1.0 + 0.3 * 1.0 = 1.0
         assert result == [pytest.approx(1.0)]
+        warnings = [
+            r for r in caplog.records if "falling back" in r.getMessage()
+        ]
+        assert len(warnings) == 1
 
-    def test_custom_fallback_used(self) -> None:
-        client, _ = _make_mock_client(exception=RuntimeError("nope"))
-        cfg = _make_config()
+    def test_custom_fallback_used(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
         sentinel = [0.5, 0.5]
 
-        def fallback(prompts, completions, criterion):
+        def fallback(
+            prompts: Any, completions: Any, *, criterion: str
+        ) -> list[float]:
             return sentinel
 
-        judge = LLMJudge(client=client, config=cfg, fallback=fallback)
-        out = judge(["a", "b"], ["x", "y"], "z")
+        judge = LLMJudge(fallback=fallback)
+        out = judge(["a", "b"], ["x", "y"], criterion="z")
         assert out == sentinel
 
-    def test_empty_completions_short_circuits(self) -> None:
-        client, complete_json = _make_mock_client(scores=[])
-        cfg = _make_config()
-        judge = LLMJudge(client=client, config=cfg)
-        result = judge([], [], "anything")
+    def test_empty_completions_short_circuits(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        captured = _install_stub(monkeypatch, [])
+        judge = LLMJudge(api_key="sk-test")
+        result = judge([], [], criterion="anything")
         assert result == []
-        complete_json.assert_not_awaited()
+        assert "client" not in captured  # client never built
 
-    def test_pads_short_score_list(self) -> None:
-        client, _ = _make_mock_client(scores=[0.6])
-        cfg = _make_config()
-        judge = LLMJudge(client=client, config=cfg)
-        result = judge(["a", "b"], ["c", "d"], "crit")
+    def test_pads_short_score_list(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Two completions but only one parseable response — the second
+        # call returns an unusable payload (we still consider it a success
+        # because the client responded, score parses to 0.0).
+        _install_stub(monkeypatch, ['{"score": 0.6}', "garbage"])
+        judge = LLMJudge(api_key="sk-test")
+        result = judge(["a", "b"], ["c", "d"], criterion="crit")
         assert result == [pytest.approx(0.6), 0.0]
 
-    def test_uses_llm_config_judge_model_when_rewards_unset(self) -> None:
-        client, complete_json = _make_mock_client(scores=[0.4])
-        cfg = _make_config(judge_model=None)
-        judge = LLMJudge(client=client, config=cfg)
-        judge(["a"], ["b"], "c")
-        assert complete_json.await_args.kwargs["model"] == "fallback-model"
+    def test_resolves_model_from_config(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        captured = _install_stub(monkeypatch, ['{"score": 0.4}'])
+
+        class _Rewards:
+            judge_model = None
+
+        class _Llm:
+            judge_model = "fallback-model"
+
+        class _Cfg:
+            rewards = _Rewards()
+            llm = _Llm()
+            api_key = "sk-test"
+
+        judge = LLMJudge(config=_Cfg())
+        judge(["a"], ["b"], criterion="c")
+        assert captured["client"].messages.calls[0]["model"] == "fallback-model"

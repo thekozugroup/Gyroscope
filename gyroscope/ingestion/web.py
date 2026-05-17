@@ -3,11 +3,23 @@
 Fetches one or more URLs with ``httpx``, extracts the main content with
 ``trafilatura`` and respects ``robots.txt``. Optionally crawls recursively
 within the same host up to ``max_depth`` and ``max_pages``.
+
+Safety properties:
+
+- Redirects are NOT followed automatically. The loader inspects each 3xx
+  ``Location`` header, blocks redirects whose target host resolves to a
+  loopback / link-local / RFC1918 address (or names like ``localhost`` /
+  ``*.local``), and — when ``same_host_only`` is set — refuses redirects
+  that leave the seed host.
+- The ``robots.txt`` cache is keyed on host with in-flight
+  :class:`asyncio.Future` placeholders, so concurrent fetches for the same
+  host coalesce into a single network round-trip.
 """
 
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 from collections import deque
 from datetime import UTC, datetime
 from typing import Any
@@ -28,6 +40,10 @@ logger = get_logger(__name__)
 USER_AGENT = "GyroscopeBot/0.1 (+https://github.com/kozugroup/gyroscope)"
 DEFAULT_TIMEOUT = 30.0
 DEFAULT_CONCURRENCY = 4
+MAX_REDIRECTS = 5
+
+
+_BLOCKED_HOSTNAMES: frozenset[str] = frozenset({"localhost", "ip6-localhost", "ip6-loopback"})
 
 
 # ---------------------------------------------------------------------------
@@ -85,6 +101,42 @@ def _extract_content(html: str, url: str) -> tuple[str, str | None, str | None]:
     return text.strip() + ("\n" if text else ""), title, sitename
 
 
+def _is_blocked_host(host: str) -> bool:
+    """Return True iff ``host`` resolves to a private / loopback / link-local target.
+
+    Only string-level inspection is performed: IPs are parsed with
+    :mod:`ipaddress` and hostnames are checked against a small denylist
+    (``localhost``, ``*.local``). DNS lookups are intentionally NOT done — the
+    caller is expected to disable redirects to suspicious hostnames before
+    issuing any network request.
+    """
+    if not host:
+        return True
+    host = host.lower().strip()
+    # Strip optional ``[ipv6]`` brackets and port.
+    if host.startswith("[") and "]" in host:
+        host = host[1 : host.index("]")]
+    elif ":" in host and host.count(":") == 1:
+        # IPv4:port — drop port.
+        host = host.split(":", 1)[0]
+    if host in _BLOCKED_HOSTNAMES:
+        return True
+    if host.endswith(".local") or host.endswith(".localhost"):
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return bool(
+        ip.is_loopback
+        or ip.is_link_local
+        or ip.is_private
+        or ip.is_multicast
+        or ip.is_reserved
+        or ip.is_unspecified
+    )
+
+
 # ---------------------------------------------------------------------------
 # Loader
 # ---------------------------------------------------------------------------
@@ -113,8 +165,11 @@ class WebLoader(Loader):
         self.same_host_only = bool(same_host_only)
         self.respect_robots = bool(respect_robots)
         self.user_agent = user_agent
-        # robots.txt cache: host -> RobotFileParser (or None if fetch failed)
-        self._robots_cache: dict[str, RobotFileParser | None] = {}
+        # robots.txt cache: host -> Future[RobotFileParser | None]. Storing
+        # futures (not parsers) lets concurrent callers for the same host
+        # coalesce on a single in-flight fetch.
+        self._robots_cache: dict[str, asyncio.Future[RobotFileParser | None]] = {}
+        self._robots_lock: asyncio.Lock | None = None
 
     # ----- registry contract -----
 
@@ -135,7 +190,7 @@ class WebLoader(Loader):
 
         async with httpx.AsyncClient(
             timeout=self.timeout,
-            follow_redirects=True,
+            follow_redirects=False,
             headers={"User-Agent": self.user_agent},
         ) as client:
             return await self._crawl(client, seeds)
@@ -143,20 +198,57 @@ class WebLoader(Loader):
     # ----- network primitives (overridable for tests) -----
 
     async def fetch(self, client: httpx.AsyncClient, url: str) -> str:
-        """Fetch ``url`` and return the response body as text."""
-        resp = await client.get(url)
-        resp.raise_for_status()
-        return resp.text
+        """Fetch ``url`` (handling a bounded redirect chain) and return body text.
+
+        Redirects are inspected manually: off-host (when ``same_host_only`` is
+        set) or private-network targets cause the chain to stop and a warning
+        to be logged. The final non-3xx response is returned.
+        """
+        current = url
+        origin_host = urlparse(url).netloc
+        for _ in range(MAX_REDIRECTS + 1):
+            resp = await client.get(current)
+            if resp.status_code in {301, 302, 303, 307, 308}:
+                location = resp.headers.get("location")
+                if not location:
+                    resp.raise_for_status()
+                    return resp.text
+                target = _normalise_url(urljoin(current, location))
+                target_host = urlparse(target).netloc
+                if _is_blocked_host(target_host):
+                    logger.warning(
+                        "refusing redirect to blocked host: %s -> %s",
+                        current,
+                        target,
+                    )
+                    raise httpx.HTTPError(
+                        f"redirect to blocked host refused: {target}"
+                    )
+                if (
+                    self.same_host_only
+                    and target_host.lower() != origin_host.lower()
+                ):
+                    logger.warning(
+                        "refusing off-host redirect (%s -> %s)",
+                        current,
+                        target,
+                    )
+                    raise httpx.HTTPError(
+                        f"off-host redirect refused: {target}"
+                    )
+                current = target
+                continue
+            resp.raise_for_status()
+            return resp.text
+        raise httpx.HTTPError(f"too many redirects starting at {url}")
 
     async def _check_robots(self, client: httpx.AsyncClient, url: str) -> bool:
         if not self.respect_robots:
             return True
         parsed = urlparse(url)
         host = f"{parsed.scheme}://{parsed.netloc}"
-        rp = self._robots_cache.get(host)
-        if rp is None and host not in self._robots_cache:
-            rp = await self._load_robots(client, host)
-            self._robots_cache[host] = rp
+        future = await self._get_or_create_robots_future(client, host)
+        rp = await future
         if rp is None:
             return True
         try:
@@ -164,7 +256,38 @@ class WebLoader(Loader):
         except Exception:
             return True
 
-    async def _load_robots(self, client: httpx.AsyncClient, host: str) -> RobotFileParser | None:
+    async def _get_or_create_robots_future(
+        self, client: httpx.AsyncClient, host: str
+    ) -> asyncio.Future[RobotFileParser | None]:
+        """Return a Future resolving to the parsed robots.txt for ``host``.
+
+        Subsequent calls for the same host (even while the first fetch is in
+        flight) reuse the existing Future, so robots.txt is fetched exactly
+        once per host per loader lifetime.
+        """
+        if self._robots_lock is None:
+            self._robots_lock = asyncio.Lock()
+        async with self._robots_lock:
+            existing = self._robots_cache.get(host)
+            if existing is not None:
+                return existing
+            loop = asyncio.get_running_loop()
+            future: asyncio.Future[RobotFileParser | None] = loop.create_future()
+            self._robots_cache[host] = future
+        # Fetch outside the lock so concurrent hosts don't serialise.
+        try:
+            parser = await self._load_robots(client, host)
+        except Exception as exc:
+            # Failure must not poison the cache; treat as "no robots.txt".
+            logger.debug("robots.txt fetch crashed for %s: %s", host, exc)
+            parser = None
+        if not future.done():
+            future.set_result(parser)
+        return future
+
+    async def _load_robots(
+        self, client: httpx.AsyncClient, host: str
+    ) -> RobotFileParser | None:
         robots_url = f"{host}/robots.txt"
         try:
             resp = await client.get(robots_url)
