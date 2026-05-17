@@ -35,6 +35,7 @@ from tenacity import (
 )
 
 from gyroscope.core.config import GyroscopeConfig
+from gyroscope.core.retry import BACKOFF_BASE, BACKOFF_CAP, MAX_ATTEMPTS
 
 logger = logging.getLogger(__name__)
 
@@ -61,12 +62,10 @@ def _decorrelated_jitter_wait(state: RetryCallState) -> float:
     so a synchronised 429 burst across many concurrent workers does not all
     retry at the same wall-clock tick on the next round.
     """
-    base = 1.0
-    cap = 60.0
     prev = float(getattr(state, "idle_for", 0.0) or 0.0)
     if state.attempt_number <= 1 or prev <= 0.0:
-        return base
-    return min(cap, random.uniform(base, prev * 3.0))
+        return BACKOFF_BASE
+    return min(BACKOFF_CAP, random.uniform(BACKOFF_BASE, prev * 3.0))
 
 
 def _is_retryable_llm_error(exc: BaseException) -> bool:
@@ -162,7 +161,7 @@ class LLMClient:
 
     @retry(
         retry=retry_if_exception(_is_retryable_llm_error),
-        stop=stop_after_attempt(5),
+        stop=stop_after_attempt(MAX_ATTEMPTS),
         wait=_decorrelated_jitter_wait,
         reraise=True,
     )

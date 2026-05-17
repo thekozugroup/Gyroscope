@@ -330,7 +330,12 @@ async def _run_batched_array(
     batch_results: list[list[dict[str, Any]]] = []
     for idx, item in enumerate(raw_batch_results):
         if isinstance(item, BaseException):
-            logger.warning("Batched extractor: batch %d raised %s; dropping.", idx, item)
+            logger.warning(
+                "Batched extractor: batch %d raised %s; dropping.",
+                idx,
+                item,
+                exc_info=item,
+            )
             batch_results.append([])
         else:
             batch_results.append(item)

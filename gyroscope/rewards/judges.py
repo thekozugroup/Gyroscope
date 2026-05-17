@@ -28,6 +28,9 @@ import time
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Protocol
 
+from gyroscope.core.retry import BACKOFF_BASE as _BACKOFF_BASE
+from gyroscope.core.retry import BACKOFF_CAP as _BACKOFF_CAP
+from gyroscope.core.retry import MAX_ATTEMPTS as _MAX_ATTEMPTS
 from gyroscope.rewards.library import tokenize
 
 if TYPE_CHECKING:
@@ -104,8 +107,6 @@ _JUDGE_SYSTEM = (
 
 
 _DEFAULT_JUDGE_MODEL = "claude-haiku-4-5-20251001"
-_MAX_ATTEMPTS = 3
-_BACKOFF_BASE = 0.5
 _MAX_TOKENS = 128
 
 
@@ -344,7 +345,7 @@ class LLMJudge:
                 last_exc = exc
                 if not self._is_retryable(exc) or attempt == _MAX_ATTEMPTS - 1:
                     break
-                sleep_for = min(60.0, random.uniform(_BACKOFF_BASE, prev_sleep * 3))
+                sleep_for = min(_BACKOFF_CAP, random.uniform(_BACKOFF_BASE, prev_sleep * 3))
                 time.sleep(sleep_for)
                 prev_sleep = sleep_for
                 continue

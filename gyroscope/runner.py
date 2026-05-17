@@ -116,23 +116,37 @@ class AutonomousRunner:
     async def _phase_sft(
         self, golden: GoldenDocument, client: LLMClient
     ) -> tuple[list[Trajectory], list[Trajectory]]:
+        import json
+
         from gyroscope.eval.pipeline import EvalPipeline
         from gyroscope.sft.formats import render
-        from gyroscope.sft.swarm import run_swarm
+        from gyroscope.sft.swarm import stream_swarm
 
-        train, eval_ = await run_swarm(golden, client, self.config.sft)
         out_dir = self.config.output_dir
         out_dir.mkdir(parents=True, exist_ok=True)
         fmt = self.config.sft.output_format
-        # SFT split: stream rows directly. Eval split: route through
-        # EvalPipeline so the procedure-level leakage check runs in production
-        # (strict=False so leakage warns rather than aborts, matching SFT
-        # pipeline semantics and keeping iteration-loop tests green).
-        write_jsonl(out_dir / "sft.jsonl", (render(t, fmt) for t in train))
+        train_path = out_dir / "sft.jsonl"
+
+        # Stream the train split straight to disk as each survivor is yielded.
+        # Keep only stripped-down metadata copies for the leakage check (tags
+        # + scenario_id; messages zeroed) and the in-memory train return list
+        # — callers (the quality grader) need procedure_ids + at least one
+        # message to score diversity/faithfulness.
+        train_full: list[Trajectory] = []
+        evals: list[Trajectory] = []
+        with train_path.open("w", encoding="utf-8") as fh:
+            async for traj, split in stream_swarm(golden, client, self.config.sft):
+                if split == "train":
+                    fh.write(json.dumps(render(traj, fmt), ensure_ascii=False))
+                    fh.write("\n")
+                    train_full.append(traj)
+                else:
+                    evals.append(traj)
+
         EvalPipeline(output_format=fmt).write(
-            eval_, train, out_dir, strict=self.config.sft.eval_strict
+            evals, train_full, out_dir, strict=self.config.sft.eval_strict
         )
-        return train, eval_
+        return train_full, evals
 
     async def _phase_rewards(self, golden: GoldenDocument, client: LLMClient) -> list[RewardSpec]:
         from gyroscope.rewards.pipeline import RewardsPipeline
@@ -192,7 +206,12 @@ class AutonomousRunner:
                 self.config.sft.n_personas, self.config.sft.n_personas + 4
             )
             self.config.llm.temperature_swarm = min(1.0, self.config.llm.temperature_swarm + 0.1)
-            self.config.sft.critic_min_score = min(0.9, self.config.sft.critic_min_score + 0.05)
+            # Soft ceiling on critic_min_score so a user who set 0.95 is not
+            # silently lowered to 0.9 on the first retry.
+            self.config.sft.critic_min_score = max(
+                self.config.sft.critic_min_score,
+                min(0.9, self.config.sft.critic_min_score + 0.05),
+            )
         if phase == "rewards":
             self.config.rewards.reward_budget = max(
                 self.config.rewards.reward_budget, self.config.rewards.reward_budget + 2

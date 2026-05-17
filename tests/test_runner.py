@@ -376,3 +376,90 @@ async def test_runner_no_progress_guard_fires(
     assert any(
         "made no progress" in r.message for r in caplog.records if r.levelno == logging.WARNING
     ), "expected 'made no progress' warning in logs"
+
+
+def test_axis_remediation_registry_api() -> None:
+    """The register / unregister / map triad must round-trip cleanly,
+    reject empty phases, and return an immutable snapshot."""
+    from gyroscope.runner import (
+        AXIS_TO_PHASES,
+        axis_remediation_map,
+        register_axis_remediation,
+        unregister_axis_remediation,
+    )
+
+    # Clean baseline.
+    assert "custom_axis" not in AXIS_TO_PHASES
+
+    register_axis_remediation("custom_axis", ["sft", "rewards"])
+    try:
+        snapshot = axis_remediation_map()
+        assert snapshot["custom_axis"] == ("sft", "rewards")
+
+        # Mutating the snapshot does NOT affect the live mapping.
+        snapshot["custom_axis"] = ("curation",)  # type: ignore[assignment]
+        assert axis_remediation_map()["custom_axis"] == ("sft", "rewards")
+
+        # Empty phase list is rejected.
+        import pytest as _pytest  # local import to avoid name shadow at module scope
+
+        with _pytest.raises(ValueError):
+            register_axis_remediation("never_added", [])
+        assert "never_added" not in axis_remediation_map()
+    finally:
+        assert unregister_axis_remediation("custom_axis") is True
+        # Second unregister is a no-op returning False.
+        assert unregister_axis_remediation("custom_axis") is False
+
+
+def test_judge_sync_retry_uses_decorrelated_jitter(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Two consecutive failed attempts must sleep within the decorrelated-jitter
+    bounds: s1 in [base, base*3] and s2 in [base, s1*3]."""
+    from gyroscope.core.retry import BACKOFF_BASE
+    from gyroscope.rewards.judges import LLMJudge
+
+    sleeps: list[float] = []
+
+    def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    # Stub the anthropic.Anthropic client to raise RateLimitError twice, then succeed.
+    class _RateLimit(Exception):
+        pass
+
+    class _FakeMessages:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def create(self, **_kwargs: object) -> object:
+            self.calls += 1
+            if self.calls < 3:
+                raise _RateLimit("simulated 429")
+
+            class _Resp:
+                content = [type("Block", (), {"text": '{"score": 0.5}'})()]  # noqa: RUF012
+
+            return _Resp()
+
+    class _FakeClient:
+        def __init__(self) -> None:
+            self.messages = _FakeMessages()
+
+    judge = LLMJudge(api_key="dummy", model="claude-test")
+    monkeypatch.setattr(judge, "_is_retryable", lambda exc: isinstance(exc, _RateLimit))
+    monkeypatch.setattr("gyroscope.rewards.judges.time.sleep", fake_sleep)
+
+    score = judge._score_pair(
+        client=_FakeClient(),
+        model="claude-test",
+        prompt="p",
+        completion="c",
+        criterion="be honest",
+    )
+    assert score == 0.5
+    assert len(sleeps) == 2, f"expected 2 retry sleeps, got {sleeps!r}"
+    s1, s2 = sleeps
+    # s1: uniform in [base, base*3]
+    assert BACKOFF_BASE <= s1 <= BACKOFF_BASE * 3 + 1e-9
+    # s2: uniform in [base, s1*3]
+    assert BACKOFF_BASE <= s2 <= s1 * 3 + 1e-9

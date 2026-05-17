@@ -22,6 +22,7 @@ System-prompt design (cache-friendly):
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 from gyroscope.core.config import SFTConfig
@@ -75,9 +76,22 @@ def _selected_procedure(golden: GoldenDocument, scenario: Scenario) -> Procedure
 # LRU-style bounded cache keyed by id(golden). Bounded so a long-running
 # process that ingests many corpora cannot leak prefixes indefinitely. The
 # id() key is safe because callers reuse the same GoldenDocument instance
-# across all workers in a single run.
+# across all workers in a single run; the cap is overridable so a library
+# user hosting many concurrent corpora can grow it without monkey-patching.
 _PREFIX_CACHE: dict[int, str] = {}
-_PREFIX_CACHE_MAX = 8
+_PREFIX_CACHE_MAX: int = int(os.environ.get("GYROSCOPE_PREFIX_CACHE_MAX", "8"))
+
+
+def set_prefix_cache_max(n: int) -> None:
+    """Override the bounded prefix cache capacity at runtime.
+
+    Useful when embedding Gyroscope inside a long-running service that
+    rotates through many corpora and wants to keep more prefixes hot.
+    """
+    global _PREFIX_CACHE_MAX
+    if n < 1:
+        raise ValueError("prefix cache max must be >= 1")
+    _PREFIX_CACHE_MAX = n
 
 
 def _prefix_cache_set(key: int, value: str) -> None:
