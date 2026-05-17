@@ -91,3 +91,41 @@ async def test_pdf_loader_extracts_pages_and_strips_boilerplate(tmp_path: Path) 
 async def test_pdf_loader_does_not_load_urls(tmp_path: Path) -> None:
     loader = PdfLoader()
     assert not loader.can_load("https://example.com/foo.pdf")
+
+
+@pytest.mark.asyncio
+async def test_pdf_loader_handles_corrupt_bytes(tmp_path: Path) -> None:
+    """A corrupt PDF must either be rejected with a known pypdf/ValueError
+    exception, or return an empty document list — but it must never silently
+    succeed with garbage text, nor raise an unrelated exception type."""
+    import pypdf.errors
+
+    path = tmp_path / "corrupt.pdf"
+    path.write_bytes(b"%PDF-1.4\n%this is not a valid pdf")
+
+    loader = PdfLoader()
+    try:
+        docs = await loader.load(str(path))
+    except (pypdf.errors.PyPdfError, pypdf.errors.PdfReadError, ValueError):
+        # Acceptable: parser surfaced the corruption.
+        return
+    # Acceptable: loader returned empty (no documents produced).
+    assert docs == [], (
+        f"corrupt PDF unexpectedly produced {len(docs)} document(s); "
+        "loader should either raise a known parser error or return []"
+    )
+
+
+@pytest.mark.asyncio
+async def test_pdf_pipeline_isolates_corrupt_source(tmp_path: Path) -> None:
+    """Per-source error isolation: one corrupt PDF must not crash the batch."""
+    from gyroscope.ingestion.pipeline import IngestionPipeline
+
+    corrupt = tmp_path / "corrupt.pdf"
+    corrupt.write_bytes(b"%PDF-1.4\n%this is not a valid pdf")
+
+    pipeline = IngestionPipeline()
+    docs = await pipeline.ingest([corrupt])
+    # The pipeline catches loader exceptions and returns []. The contract is
+    # "no crash" — an empty result is the canonical signal here.
+    assert docs == [], f"expected [] when the only source is corrupt; got {docs!r}"

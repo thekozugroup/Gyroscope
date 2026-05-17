@@ -185,3 +185,66 @@ async def test_run_swarm_is_leak_free_dedupes_and_writes_to_disk(monkeypatch, tm
     assert len(eval_rows) >= 1
     # Default format is ShareGPT — every row has "conversations".
     assert all("conversations" in r for r in train_rows + eval_rows)
+
+
+@pytest.mark.asyncio
+async def test_run_swarm_returns_empty_when_all_below_threshold(monkeypatch) -> None:
+    """Every trajectory scores 0.1; critic_min_score=0.95 — both splits empty.
+
+    Pins the contract that ``run_swarm`` quietly drops sub-threshold trajectories
+    rather than raising. If a future change starts raising on an all-empty
+    result, this test fails so the caller is forced to handle it.
+    """
+    golden = make_golden(n_procedures=2, n_principles=2)
+
+    fake = FakeLLM(
+        json_array_responses=[
+            [
+                {
+                    "name": f"P{i}",
+                    "description": f"persona {i}",
+                    "expertise_level": "intermediate",
+                    "tone": "neutral",
+                }
+                for i in range(1, 3)
+            ]
+        ],
+        json_responses=[
+            {"prompt_seed": f"easy seed {i}"} for i in range(4)
+        ],
+    )
+
+    async def fake_build(
+        scenario: Scenario,
+        gold: Any,
+        client: Any,
+        max_turns: int = 6,
+        *,
+        personas: Any = None,
+        config: Any = None,
+    ) -> Trajectory:
+        # Every trajectory comes back well below critic_min_score=0.95.
+        return _make_trajectory(
+            scenario,
+            user=scenario.prompt_seed,
+            assistant=f"weak answer for {scenario.id}",
+            score=0.1,
+        )
+
+    monkeypatch.setattr(swarm_mod, "build_trajectory", fake_build)
+
+    cfg = SFTConfig(
+        critic_min_score=0.95,
+        n_trajectories=4,
+        n_personas=2,
+        difficulty_mix={"easy": 1.0},
+        eval_holdout_fraction=0.5,
+        max_repair_attempts=0,
+    )
+
+    train, evals = await run_swarm(golden, fake, cfg)  # type: ignore[arg-type]
+
+    assert (train, evals) == ([], []), (
+        f"expected ([], []) when every trajectory is sub-threshold, got "
+        f"({len(train)} train, {len(evals)} eval)"
+    )

@@ -223,6 +223,30 @@ async def test_runner_retries_failing_phase_then_passes(
     assert call_state["curate_calls"] == 1
     assert call_state["sft_calls"] >= 2
 
+    # --- Stronger assertions: which axis triggered which retry. ---
+    # The initial iteration is recorded with no phases_re_run.
+    assert runner.history[0].phases_re_run == [], (
+        f"iteration 0 should record no retries; got {runner.history[0].phases_re_run!r}"
+    )
+    # The first retry was triggered by the diversity axis (bad_train is 10
+    # near-identical trajectories) — diversity maps to the "sft" phase.
+    assert runner.history[1].phases_re_run == ["sft"], (
+        f"first retry should be sft only; got {runner.history[1].phases_re_run!r}"
+    )
+    # Diversity was indeed the failing axis on iteration 0.
+    assert "diversity" in runner.history[0].report.axes
+    assert runner.history[0].report.axes["diversity"].score < runner.threshold, (
+        f"diversity should fail on iter 0 (< {runner.threshold}); got "
+        f"{runner.history[0].report.axes['diversity'].score:.2f}"
+    )
+    # The final iteration crossed the threshold on every axis.
+    assert runner.history[-1].report.all_pass(runner.threshold), (
+        "expected all axes >= threshold on the final iteration; got "
+        + ", ".join(
+            f"{n}={a.score:.1f}" for n, a in runner.history[-1].report.axes.items()
+        )
+    )
+
 
 @pytest.mark.asyncio
 async def test_runner_stops_at_max_iterations(
