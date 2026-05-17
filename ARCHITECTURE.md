@@ -125,7 +125,9 @@ Swarm operates as short-lived agents:
 2. **User-sim** plays the user.
 3. **Assistant** plays the role using the golden doc as context.
 4. **Critic** scores the trajectory against principles; failed rows are dropped or repaired.
-5. **De-duplicator** runs at end to prune semantic duplicates.
+5. **De-duplicator** runs inline as each trajectory survives the critic; the
+   first occurrence in worker-completion order wins (token-set Jaccard
+   over `scenario.prompt_seed + first_user_message`).
 
 ### Phase 4 — Reward design
 **Input:** `GoldenDocument`.

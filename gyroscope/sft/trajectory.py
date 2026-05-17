@@ -214,6 +214,11 @@ def build_stable_system_prefix(golden: GoldenDocument) -> str:
                 for pc in procedure.postconditions:
                     parts.append(f"- {pc}")
 
+    if golden.knowledge:
+        parts.append("\n# Knowledge (full list)")
+        for k in golden.knowledge:
+            parts.append(f"- [{k.id}] {k.statement}")
+
     if golden.vocabulary:
         parts.append("\n# Vocabulary")
         for v in golden.vocabulary:
@@ -464,6 +469,11 @@ def _inject_scenario_suffix(
     first_user_seen = False
     for m in history:
         if m.role not in ("user", "assistant"):
+            # Tool / system turns are valid in TrajectoryMessage but the
+            # Anthropic API expects an alternating user/assistant sequence.
+            # Surface the drop at debug so a future tool-using assistant
+            # doesn't disappear silently — visible without spamming logs.
+            logger.debug("dropping non-user/assistant role %r from API messages", m.role)
             continue
         content = m.content
         if not first_user_seen and m.role == "user":

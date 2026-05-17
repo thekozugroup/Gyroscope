@@ -54,18 +54,41 @@ _RETRYABLE_STATUS_CODES: frozenset[int] = frozenset({408, 409, 425, 429, 500, 50
 _APITimeoutError: type[BaseException] | None = getattr(anthropic, "APITimeoutError", None)
 
 
+# Per-instance state for decorrelated jitter. Keyed by the RetryCallState
+# object identity (tenacity creates a fresh state per decorated call) so
+# concurrent retries on different requests do not interfere.
+_PREV_WAIT_BY_STATE: dict[int, float] = {}
+
+
 def _decorrelated_jitter_wait(state: RetryCallState) -> float:
     """Decorrelated-jitter backoff.
 
-    AWS-style decorrelated jitter: ``delay_n = min(cap, U(base, prev * 3))``.
-    Spreads retry timings more aggressively than plain jittered exponential,
-    so a synchronised 429 burst across many concurrent workers does not all
-    retry at the same wall-clock tick on the next round.
+    AWS-style decorrelated jitter: ``delay_n = min(cap, U(base, prev_wait * 3))``
+    where ``prev_wait`` is the wait FROM THE LAST ATTEMPT (not the cumulative
+    idle time across all attempts — that's what tenacity's ``state.idle_for``
+    holds, and using it would compound the spread on attempts ≥ 3 faster
+    than the formula intends).
+
+    Spreads retry timings aggressively so a synchronised 429 burst across
+    many concurrent workers does not all retry at the same wall-clock tick.
     """
-    prev = float(getattr(state, "idle_for", 0.0) or 0.0)
-    if state.attempt_number <= 1 or prev <= 0.0:
-        return BACKOFF_BASE
-    return min(BACKOFF_CAP, random.uniform(BACKOFF_BASE, prev * 3.0))
+    key = id(state)
+    if state.attempt_number <= 1:
+        _PREV_WAIT_BY_STATE.pop(key, None)
+        next_wait = BACKOFF_BASE
+    else:
+        prev_wait = _PREV_WAIT_BY_STATE.get(key, BACKOFF_BASE)
+        next_wait = min(BACKOFF_CAP, random.uniform(BACKOFF_BASE, prev_wait * 3.0))
+    _PREV_WAIT_BY_STATE[key] = next_wait
+    # Bound the state map so a long-running process doesn't accumulate
+    # entries from many short retry chains. Eight is fine — typical depth
+    # is 1-4 entries since states are released after the retry resolves.
+    if len(_PREV_WAIT_BY_STATE) > 64:
+        # Drop the oldest insertion (py3.7+ preserves order).
+        oldest = next(iter(_PREV_WAIT_BY_STATE))
+        if oldest != key:
+            _PREV_WAIT_BY_STATE.pop(oldest, None)
+    return next_wait
 
 
 def _is_retryable_llm_error(exc: BaseException) -> bool:

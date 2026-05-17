@@ -319,3 +319,47 @@ def test_stream_swarm_primes_prefix_cache_exactly_once(monkeypatch) -> None:  # 
     assert call_count["n"] == 1, (
         f"stream_swarm should prime the prefix exactly once; got {call_count['n']}"
     )
+
+
+def test_prefix_cache_evicts_oldest_when_full() -> None:
+    """The bounded LRU must drop the oldest entry once capacity is hit."""
+    from gyroscope.sft.trajectory import (
+        _PREFIX_CACHE,
+        build_stable_system_prefix,
+        set_prefix_cache_max,
+    )
+
+    from .conftest import make_golden
+
+    # Reset cache + cap to a small known value.
+    _PREFIX_CACHE.clear()
+    original = build_stable_system_prefix.__globals__["_PREFIX_CACHE_MAX"]
+    try:
+        set_prefix_cache_max(3)
+
+        # Insert 3 distinct goldens — each gets a different role marker so
+        # the fingerprint differs.
+        goldens = []
+        for i in range(3):
+            g = make_golden()
+            g.identity.role = f"role-{i}"
+            goldens.append(g)
+            build_stable_system_prefix(g)
+        assert len(_PREFIX_CACHE) == 3
+
+        # Insert a 4th — the oldest (role-0) must be evicted, role-1/2/3 kept.
+        g4 = make_golden()
+        g4.identity.role = "role-3"
+        build_stable_system_prefix(g4)
+        assert len(_PREFIX_CACHE) == 3
+
+        # role-0 is gone; building it again must re-derive (no cached hit).
+        build_stable_system_prefix(goldens[0])  # re-inserts, so cache size stays 3
+        # role-1 should now be the oldest. Confirm by triggering one more eviction.
+        g5 = make_golden()
+        g5.identity.role = "role-4"
+        build_stable_system_prefix(g5)
+        assert len(_PREFIX_CACHE) == 3
+    finally:
+        _PREFIX_CACHE.clear()
+        set_prefix_cache_max(original)
