@@ -21,6 +21,7 @@ class LLMConfig(BaseModel):
     temperature_curator: float = 0.2
     temperature_swarm: float = 0.9
     temperature_critic: float = 0.0
+    temperature_judge: float = 0.0
 
     max_concurrent: int = 16
     """Max in-flight requests across the pipeline."""

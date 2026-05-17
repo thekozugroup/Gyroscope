@@ -37,6 +37,13 @@ _DEFAULT_FILE_EXTS: tuple[str, ...] = (
 
 
 def _default_registry(web_loader: WebLoader | None = None) -> LoaderRegistry:
+    """Build the default loader registry.
+
+    Order matters: built-in loaders register first so they always win
+    ``resolve()`` for canonical file types, then third-party loaders
+    discovered via the ``gyroscope.loaders`` entry-point group are appended.
+    Missing entry points are silently skipped.
+    """
     reg = LoaderRegistry()
     reg.register(PdfLoader())
     reg.register(MarkdownLoader())
@@ -44,6 +51,14 @@ def _default_registry(web_loader: WebLoader | None = None) -> LoaderRegistry:
     reg.register(DocxLoader())
     reg.register(TxtLoader())
     reg.register(web_loader or WebLoader())
+    try:
+        discovered = LoaderRegistry.discover()
+    except Exception:
+        # Best-effort: a broken plugin must never block ingestion.
+        logger.debug("entry-point loader discovery failed", exc_info=True)
+        discovered = LoaderRegistry()
+    for loader in discovered.loaders():
+        reg.register(loader)
     return reg
 
 

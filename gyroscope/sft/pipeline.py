@@ -10,6 +10,7 @@ from gyroscope.core.config import SFTConfig
 from gyroscope.core.io import write_jsonl
 from gyroscope.core.llm import LLMClient
 from gyroscope.core.models import GoldenDocument, Trajectory
+from gyroscope.eval.pipeline import EvalPipeline
 from gyroscope.sft.formats import render
 from gyroscope.sft.swarm import run_swarm
 
@@ -38,18 +39,26 @@ class SFTPipeline:
         self._log_distribution("eval", evals)
 
         train_path = out_dir / "sft.jsonl"
-        eval_path = out_dir / "eval.jsonl"
 
-        train_rows = [render(t, config.output_format) for t in train]
-        eval_rows = [render(t, config.output_format) for t in evals]
-        write_jsonl(train_path, train_rows)
-        write_jsonl(eval_path, eval_rows)
+        # Stream rows to disk via a generator so we never materialise the
+        # entire dataset in memory just to write it out.
+        n_train = write_jsonl(
+            train_path,
+            (render(t, config.output_format) for t in train),
+        )
+
+        # Route the eval split through EvalPipeline so the procedure-level
+        # leakage check actually runs in production (not just unit tests).
+        # ``strict=False`` keeps existing call sites green: leakage emits a
+        # warning rather than aborting the SFT run.
+        eval_pipeline = EvalPipeline(output_format=config.output_format)
+        eval_path = eval_pipeline.write(evals, train, out_dir, strict=False)
 
         logger.info(
             "wrote %d train rows to %s and %d eval rows to %s",
-            len(train_rows),
+            n_train,
             train_path,
-            len(eval_rows),
+            len(evals),
             eval_path,
         )
         return train_path, eval_path

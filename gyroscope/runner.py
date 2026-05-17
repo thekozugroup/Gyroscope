@@ -94,6 +94,7 @@ class AutonomousRunner:
     async def _phase_sft(
         self, golden: GoldenDocument, client: LLMClient
     ) -> tuple[list[Trajectory], list[Trajectory]]:
+        from gyroscope.eval.pipeline import EvalPipeline
         from gyroscope.sft.formats import render
         from gyroscope.sft.swarm import run_swarm
 
@@ -101,8 +102,12 @@ class AutonomousRunner:
         out_dir = self.config.output_dir
         out_dir.mkdir(parents=True, exist_ok=True)
         fmt = self.config.sft.output_format
+        # SFT split: stream rows directly. Eval split: route through
+        # EvalPipeline so the procedure-level leakage check runs in production
+        # (strict=False so leakage warns rather than aborts, matching SFT
+        # pipeline semantics and keeping iteration-loop tests green).
         write_jsonl(out_dir / "sft.jsonl", (render(t, fmt) for t in train))
-        write_jsonl(out_dir / "eval.jsonl", (render(t, fmt) for t in eval_))
+        EvalPipeline(output_format=fmt).write(eval_, train, out_dir, strict=False)
         return train, eval_
 
     async def _phase_rewards(

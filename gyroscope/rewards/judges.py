@@ -109,13 +109,35 @@ _BACKOFF_BASE = 0.5
 _MAX_TOKENS = 128
 
 
-def _build_pair_prompt(prompt: str, completion: str, criterion: str) -> str:
+def _build_pair_prompt(prompt: str, completion: str) -> str:
+    """Build the per-pair user payload.
+
+    The principle to enforce lives in the cached system block (see
+    :func:`_build_system_blocks`); this user message is the only thing that
+    changes per ``(prompt, completion)`` call.
+    """
     return (
-        f"Principle to enforce:\n{criterion}\n\n"
         f"Prompt:\n{prompt}\n\n"
         f"Response:\n{completion}\n\n"
-        'Return strictly: {"score": <float in [0.0, 1.0]>}'
+        'Return JSON {"score": <float in [0.0, 1.0]>}.'
     )
+
+
+def _build_system_blocks(criterion: str) -> list[dict[str, Any]]:
+    """Return the judge system prompt as a single cacheable text block.
+
+    The block is identical for every ``(prompt, completion)`` pair scored
+    against the same ``criterion``, which lets Anthropic's ephemeral prompt
+    cache reuse it across the entire batch (and across an entire training run
+    once the criterion stabilises).
+    """
+    return [
+        {
+            "type": "text",
+            "text": _JUDGE_SYSTEM + "\n\nPRINCIPLE TO ENFORCE:\n" + criterion,
+            "cache_control": {"type": "ephemeral"},
+        }
+    ]
 
 
 def _clip01(x: float) -> float:
@@ -301,7 +323,8 @@ class LLMJudge:
         completion: str,
         criterion: str,
     ) -> float | None:
-        user = _build_pair_prompt(prompt, completion, criterion)
+        user = _build_pair_prompt(prompt, completion)
+        system_blocks = _build_system_blocks(criterion)
         last_exc: Exception | None = None
         for attempt in range(_MAX_ATTEMPTS):
             try:
@@ -309,7 +332,7 @@ class LLMJudge:
                     model=model,
                     max_tokens=_MAX_TOKENS,
                     temperature=0.0,
-                    system=_JUDGE_SYSTEM,
+                    system=system_blocks,
                     messages=[{"role": "user", "content": user}],
                 )
             except Exception as exc:

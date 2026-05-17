@@ -121,9 +121,9 @@ class LLMClient:
     def temperature_for(self, role: str) -> float:
         """Return the configured sampling temperature for ``role``.
 
-        The judge role has no dedicated temperature field, so we reuse the
-        critic temperature (typically 0.0) — judging should be deterministic.
-        Unknown roles raise :class:`ValueError`.
+        The judge has its own ``temperature_judge`` knob (defaulting to 0.0
+        for deterministic judging) so it can be tuned independently of the
+        critic. Unknown roles raise :class:`ValueError`.
         """
         cfg = self._config.llm
         if role == "curator":
@@ -133,7 +133,7 @@ class LLMClient:
         if role == "critic":
             return cfg.temperature_critic
         if role == "judge":
-            return cfg.temperature_critic
+            return cfg.temperature_judge
         raise ValueError(
             f"Unknown LLM role {role!r}; expected one of {sorted(_VALID_ROLES)}."
         )
@@ -191,7 +191,16 @@ class LLMClient:
         cache_system: bool | None = None,
         assistant_prefill: str | None = None,
     ) -> str:
-        """Single-turn completion. Optionally cache the system prompt."""
+        """Single-turn completion. Optionally cache the system prompt.
+
+        When ``cache_system`` is True (default from ``LLMConfig.cache_prompts``)
+        we always emit the ``cache_control={"type": "ephemeral"}`` marker on
+        the system block. Anthropic only actually caches blocks above the
+        provider's minimum (currently ~1024 tokens) and silently returns a
+        cache miss for anything smaller — callers are responsible for ensuring
+        the block is large enough to be worth caching. This is closer to the
+        SDK contract than the previous byte-length heuristic.
+        """
         cfg = self._config.llm
         model = model or cfg.swarm_model
         max_tokens = max_tokens or cfg.max_tokens
@@ -199,7 +208,7 @@ class LLMClient:
         cache_system = cfg.cache_prompts if cache_system is None else cache_system
 
         sys_payload: str | list[dict[str, Any]]
-        if cache_system and len(system) > 1000:
+        if cache_system:
             sys_payload = [
                 {
                     "type": "text",
@@ -235,6 +244,11 @@ class LLMClient:
         temperature: float | None = None,
         cache_system: bool | None = None,
     ) -> str:
+        """Multi-turn completion. See :meth:`complete` for ``cache_system``
+        semantics — when True we always emit the ``cache_control`` marker and
+        leave it to Anthropic (and the caller) to decide whether the block is
+        large enough to actually cache.
+        """
         cfg = self._config.llm
         model = model or cfg.swarm_model
         max_tokens = max_tokens or cfg.max_tokens
@@ -242,7 +256,7 @@ class LLMClient:
         cache_system = cfg.cache_prompts if cache_system is None else cache_system
 
         sys_payload: str | list[dict[str, Any]]
-        if cache_system and len(system) > 1000:
+        if cache_system:
             sys_payload = [
                 {
                     "type": "text",

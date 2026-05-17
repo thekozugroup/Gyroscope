@@ -114,7 +114,11 @@ class TestLLMJudgeWithStubbedClient:
         assert len(calls) == 2
         assert calls[0]["model"] == "claude-test"
         assert calls[0]["temperature"] == 0.0
-        assert "be helpful" in calls[0]["messages"][0]["content"]
+        # Criterion now lives in the cached system block, not the user payload.
+        sys0 = calls[0]["system"]
+        assert isinstance(sys0, list)
+        assert "be helpful" in sys0[0]["text"]
+        assert sys0[0]["cache_control"] == {"type": "ephemeral"}
         assert "c1" in calls[0]["messages"][0]["content"]
         assert "c2" in calls[1]["messages"][0]["content"]
 

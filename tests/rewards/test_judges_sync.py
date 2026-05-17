@@ -113,7 +113,11 @@ def test_sync_anthropic_client_is_used_when_api_key_present(
     assert call["temperature"] == 0.0
     user_text = call["messages"][0]["content"]
     assert "a response" in user_text
-    assert "be safe" in user_text
+    # Criterion now travels through the cached system block, not the user payload.
+    sys_blocks = call["system"]
+    assert isinstance(sys_blocks, list)
+    assert "be safe" in sys_blocks[0]["text"]
+    assert sys_blocks[0]["cache_control"] == {"type": "ephemeral"}
 
 
 def test_sync_client_is_built_lazily(

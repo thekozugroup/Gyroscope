@@ -215,8 +215,32 @@ def test_temperature_for_returns_role_specific_temperature(client: LLMClient) ->
     assert client.temperature_for("curator") == cfg.temperature_curator
     assert client.temperature_for("swarm") == cfg.temperature_swarm
     assert client.temperature_for("critic") == cfg.temperature_critic
-    # Judge reuses critic temperature (deterministic judging).
-    assert client.temperature_for("judge") == cfg.temperature_critic
+    # Judge now has its own dedicated temperature knob.
+    assert client.temperature_for("judge") == cfg.temperature_judge
+
+
+def test_temperature_judge_is_independent_of_critic() -> None:
+    """``temperature_judge`` must not piggy-back on ``temperature_critic``.
+
+    Setting one must not affect the other — the two roles are tuned
+    independently. Regression guard against the previous implementation
+    which silently returned ``temperature_critic`` for the judge role.
+    """
+    cfg = GyroscopeConfig(
+        api_key="test",
+        llm=LLMConfig(temperature_critic=0.0, temperature_judge=0.42),
+    )
+    client_obj = LLMClient(cfg)
+    assert client_obj.temperature_for("critic") == 0.0
+    assert client_obj.temperature_for("judge") == pytest.approx(0.42)
+
+    cfg2 = GyroscopeConfig(
+        api_key="test",
+        llm=LLMConfig(temperature_critic=0.3, temperature_judge=0.0),
+    )
+    client_obj2 = LLMClient(cfg2)
+    assert client_obj2.temperature_for("critic") == pytest.approx(0.3)
+    assert client_obj2.temperature_for("judge") == 0.0
 
 
 def test_model_for_unknown_role_raises(client: LLMClient) -> None:
@@ -269,3 +293,79 @@ async def test_complete_json_raises_when_strict(client: LLMClient) -> None:
 
     with pytest.raises(ValueError):
         await client.complete_json(system="s", user="u")
+
+
+# ---------------------------------------------------------------------------
+# cache_system semantics.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_cache_system_true_always_emits_cache_control_even_for_short(
+    client: LLMClient,
+) -> None:
+    """``cache_system=True`` must mark the system block with ``cache_control``
+    regardless of byte length. The previous 1000-char gate was the wrong
+    unit (bytes, not tokens) and confused opt-in callers like LLMJudge.
+    """
+    captured: dict[str, Any] = {}
+
+    async def _capture(**kwargs: Any) -> Any:
+        captured.update(kwargs)
+        return _FakeResponse("ok")
+
+    client._client.messages.create = AsyncMock(side_effect=_capture)  # type: ignore[assignment]
+
+    short_system = "tiny system"  # well below the historical 1000-byte gate
+    out = await client.complete(
+        system=short_system,
+        user="u",
+        cache_system=True,
+    )
+    assert out == "ok"
+    sys_arg = captured["system"]
+    assert isinstance(sys_arg, list), "cache_system=True must emit a typed block list"
+    assert sys_arg[0]["type"] == "text"
+    assert sys_arg[0]["text"] == short_system
+    assert sys_arg[0]["cache_control"] == {"type": "ephemeral"}
+
+
+@pytest.mark.asyncio
+async def test_cache_system_false_keeps_system_as_string(
+    client: LLMClient,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    async def _capture(**kwargs: Any) -> Any:
+        captured.update(kwargs)
+        return _FakeResponse("ok")
+
+    client._client.messages.create = AsyncMock(side_effect=_capture)  # type: ignore[assignment]
+
+    await client.complete(system="abcdef", user="u", cache_system=False)
+    assert captured["system"] == "abcdef"
+
+
+@pytest.mark.asyncio
+async def test_cache_system_true_marks_cache_control_in_complete_messages(
+    client: LLMClient,
+) -> None:
+    """The same semantics apply to :meth:`LLMClient.complete_messages`."""
+    from gyroscope.core.llm import LLMMessage
+
+    captured: dict[str, Any] = {}
+
+    async def _capture(**kwargs: Any) -> Any:
+        captured.update(kwargs)
+        return _FakeResponse("ok")
+
+    client._client.messages.create = AsyncMock(side_effect=_capture)  # type: ignore[assignment]
+
+    await client.complete_messages(
+        system="short",
+        messages=[LLMMessage(role="user", content="hi")],
+        cache_system=True,
+    )
+    sys_arg = captured["system"]
+    assert isinstance(sys_arg, list)
+    assert sys_arg[0]["cache_control"] == {"type": "ephemeral"}

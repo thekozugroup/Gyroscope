@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import logging
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -28,7 +29,14 @@ from gyroscope.rewards.spec import RewardBundle
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["emit_rewards_module"]
+__all__ = [
+    "RENDERERS",
+    "emit_rewards_module",
+    "register_renderer",
+]
+
+
+RendererFn = Callable[[RewardSpec], str]
 
 
 _LIB_BANNER = (
@@ -58,6 +66,130 @@ def _py_repr(value: Any) -> str:
     return repr(value)
 
 
+def _render_format_body(spec: RewardSpec) -> str:
+    cfg = spec.config
+    if "pattern" in cfg:
+        return (
+            f"    pattern = {_py_repr(cfg['pattern'])}\n"
+            f"    return _lib.format_regex(completions, pattern=pattern)\n"
+        )
+    if "json_schema" in cfg:
+        return (
+            f"    schema = {_py_repr(cfg['json_schema'])}\n"
+            f"    return _lib.format_json_schema(completions, schema=schema)\n"
+        )
+    sections = cfg.get("sections", [])
+    return (
+        f"    sections = {_py_repr(list(sections))}\n"
+        f"    return _lib.format_sections(completions, sections=sections)\n"
+    )
+
+
+def _render_lexical_body(spec: RewardSpec) -> str:
+    cfg = spec.config
+    return (
+        f"    required = {_py_repr(list(cfg.get('required', [])))}\n"
+        f"    forbidden = {_py_repr(list(cfg.get('forbidden', [])))}\n"
+        f"    case_sensitive = {_py_repr(bool(cfg.get('case_sensitive', False)))}\n"
+        f"    return _lib.lexical(\n"
+        f"        completions,\n"
+        f"        required=required,\n"
+        f"        forbidden=forbidden,\n"
+        f"        case_sensitive=case_sensitive,\n"
+        f"    )\n"
+    )
+
+
+def _render_length_body(spec: RewardSpec) -> str:
+    cfg = spec.config
+    return (
+        f"    return _lib.length(\n"
+        f"        completions,\n"
+        f"        min_tokens={int(cfg.get('min_tokens', 0))},\n"
+        f"        max_tokens={int(cfg.get('max_tokens', 1024))},\n"
+        f"        sweet_spot={int(cfg.get('sweet_spot', 256))},\n"
+        f"    )\n"
+    )
+
+
+def _render_citation_body(spec: RewardSpec) -> str:
+    cfg = spec.config
+    default_pattern = r"\[KNW-\d+\]"
+    return (
+        f"    return _lib.citation(\n"
+        f"        completions,\n"
+        f"        require_ids={_py_repr(bool(cfg.get('require_ids', True)))},\n"
+        f"        min_citations={int(cfg.get('min_citations', 1))},\n"
+        f"        id_pattern={_py_repr(cfg.get('id_pattern', default_pattern))},\n"
+        f"    )\n"
+    )
+
+
+def _render_safety_body(spec: RewardSpec) -> str:
+    cfg = spec.config
+    return (
+        f"    anti_pattern_terms = {_py_repr(list(cfg.get('anti_pattern_terms', [])))}\n"
+        f"    return _lib.safety(completions, anti_pattern_terms=anti_pattern_terms)\n"
+    )
+
+
+def _render_principle_body(spec: RewardSpec) -> str:
+    cfg = spec.config
+    statement = cfg.get("principle_statement", "")
+    return (
+        f"    judge = kwargs.get('judge')\n"
+        f"    principle_statement = {_py_repr(statement)}\n"
+        f"    return _lib.principle_judge(\n"
+        f"        completions,\n"
+        f"        prompts,\n"
+        f"        principle_statement=principle_statement,\n"
+        f"        judge=judge,\n"
+        f"    )\n"
+    )
+
+
+def _render_procedure_body(spec: RewardSpec) -> str:
+    cfg = spec.config
+    ordered_steps = list(cfg.get("ordered_steps", []))
+    ordered = bool(cfg.get("ordered", True))
+    return (
+        f"    ordered_steps = {_py_repr(ordered_steps)}\n"
+        f"    return _lib.procedure_check(\n"
+        f"        completions,\n"
+        f"        ordered_steps=ordered_steps,\n"
+        f"        ordered={_py_repr(ordered)},\n"
+        f"    )\n"
+    )
+
+
+def _render_noop_body(spec: RewardSpec) -> str:  # pragma: no cover - exhaustive fallback
+    return "    return [0.0 for _ in completions]\n"
+
+
+#: Mapping of :class:`RewardKind` -> body renderer. Plugins can extend this
+#: via :func:`register_renderer`. Each renderer takes a ``RewardSpec`` and
+#: returns the indented function body (the surrounding ``def`` / docstring
+#: are built by :func:`_render_function`).
+RENDERERS: dict[RewardKind, RendererFn] = {
+    RewardKind.FORMAT: _render_format_body,
+    RewardKind.LEXICAL: _render_lexical_body,
+    RewardKind.LENGTH: _render_length_body,
+    RewardKind.CITATION: _render_citation_body,
+    RewardKind.SAFETY: _render_safety_body,
+    RewardKind.PRINCIPLE: _render_principle_body,
+    RewardKind.PROCEDURE: _render_procedure_body,
+}
+
+
+def register_renderer(kind: RewardKind, fn: RendererFn) -> None:
+    """Register or replace the body renderer for ``kind``.
+
+    Registering an existing kind overwrites the binding — tests and plugins
+    can install a custom renderer without monkeypatching module internals.
+    """
+    RENDERERS[kind] = fn
+
+
 def _render_function(spec: RewardSpec) -> str:
     """Emit a TRL-compatible reward function for a single spec."""
     fn_name = f"reward_{spec.name}"
@@ -69,99 +201,8 @@ def _render_function(spec: RewardSpec) -> str:
         f"    Procedure ids: {list(spec.procedure_ids)}\n"
         f'    """'
     )
-
-    if spec.kind is RewardKind.FORMAT:
-        cfg = spec.config
-        if "pattern" in cfg:
-            body = (
-                f"    pattern = {_py_repr(cfg['pattern'])}\n"
-                f"    return _lib.format_regex(completions, pattern=pattern)\n"
-            )
-        elif "json_schema" in cfg:
-            body = (
-                f"    schema = {_py_repr(cfg['json_schema'])}\n"
-                f"    return _lib.format_json_schema(completions, schema=schema)\n"
-            )
-        else:
-            sections = cfg.get("sections", [])
-            body = (
-                f"    sections = {_py_repr(list(sections))}\n"
-                f"    return _lib.format_sections(completions, sections=sections)\n"
-            )
-
-    elif spec.kind is RewardKind.LEXICAL:
-        cfg = spec.config
-        body = (
-            f"    required = {_py_repr(list(cfg.get('required', [])))}\n"
-            f"    forbidden = {_py_repr(list(cfg.get('forbidden', [])))}\n"
-            f"    case_sensitive = {_py_repr(bool(cfg.get('case_sensitive', False)))}\n"
-            f"    return _lib.lexical(\n"
-            f"        completions,\n"
-            f"        required=required,\n"
-            f"        forbidden=forbidden,\n"
-            f"        case_sensitive=case_sensitive,\n"
-            f"    )\n"
-        )
-
-    elif spec.kind is RewardKind.LENGTH:
-        cfg = spec.config
-        body = (
-            f"    return _lib.length(\n"
-            f"        completions,\n"
-            f"        min_tokens={int(cfg.get('min_tokens', 0))},\n"
-            f"        max_tokens={int(cfg.get('max_tokens', 1024))},\n"
-            f"        sweet_spot={int(cfg.get('sweet_spot', 256))},\n"
-            f"    )\n"
-        )
-
-    elif spec.kind is RewardKind.CITATION:
-        cfg = spec.config
-        default_pattern = r"\[KNW-\d+\]"
-        body = (
-            f"    return _lib.citation(\n"
-            f"        completions,\n"
-            f"        require_ids={_py_repr(bool(cfg.get('require_ids', True)))},\n"
-            f"        min_citations={int(cfg.get('min_citations', 1))},\n"
-            f"        id_pattern={_py_repr(cfg.get('id_pattern', default_pattern))},\n"
-            f"    )\n"
-        )
-
-    elif spec.kind is RewardKind.SAFETY:
-        cfg = spec.config
-        body = (
-            f"    anti_pattern_terms = {_py_repr(list(cfg.get('anti_pattern_terms', [])))}\n"
-            f"    return _lib.safety(completions, anti_pattern_terms=anti_pattern_terms)\n"
-        )
-
-    elif spec.kind is RewardKind.PRINCIPLE:
-        cfg = spec.config
-        statement = cfg.get("principle_statement", "")
-        body = (
-            f"    judge = kwargs.get('judge')\n"
-            f"    principle_statement = {_py_repr(statement)}\n"
-            f"    return _lib.principle_judge(\n"
-            f"        completions,\n"
-            f"        prompts,\n"
-            f"        principle_statement=principle_statement,\n"
-            f"        judge=judge,\n"
-            f"    )\n"
-        )
-
-    elif spec.kind is RewardKind.PROCEDURE:
-        cfg = spec.config
-        ordered_steps = list(cfg.get("ordered_steps", []))
-        ordered = bool(cfg.get("ordered", True))
-        body = (
-            f"    ordered_steps = {_py_repr(ordered_steps)}\n"
-            f"    return _lib.procedure_check(\n"
-            f"        completions,\n"
-            f"        ordered_steps=ordered_steps,\n"
-            f"        ordered={_py_repr(ordered)},\n"
-            f"    )\n"
-        )
-    else:  # pragma: no cover - exhaustive enum
-        body = "    return [0.0 for _ in completions]\n"
-
+    renderer = RENDERERS.get(spec.kind, _render_noop_body)
+    body = renderer(spec)
     return (
         f"def {fn_name}(prompts: list[str], completions: list[str], **kwargs: Any) -> list[float]:\n"
         f"    {docstring}\n"
