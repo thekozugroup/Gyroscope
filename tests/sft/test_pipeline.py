@@ -59,12 +59,13 @@ async def test_sft_pipeline_streams_rows_via_generator(
         )
     ]
 
-    async def fake_run_swarm(
-        _golden: Any, _client: Any, _config: Any
-    ) -> tuple[list[Any], list[Any]]:
-        return train, evals
+    async def fake_stream_swarm(_golden: Any, _client: Any, _config: Any):
+        for t in train:
+            yield t, "train"
+        for t in evals:
+            yield t, "eval"
 
-    monkeypatch.setattr(pipeline_mod, "run_swarm", fake_run_swarm)
+    monkeypatch.setattr(pipeline_mod, "stream_swarm", fake_stream_swarm)
 
     captured: list[Any] = []
     real_write_jsonl = pipeline_mod.write_jsonl
@@ -126,12 +127,13 @@ async def test_sft_pipeline_routes_eval_split_through_eval_pipeline(
         )
     ]
 
-    async def fake_run_swarm(
-        _golden: Any, _client: Any, _config: Any
-    ) -> tuple[list[Any], list[Any]]:
-        return train, evals
+    async def fake_stream_swarm(_golden: Any, _client: Any, _config: Any):
+        for t in train:
+            yield t, "train"
+        for t in evals:
+            yield t, "eval"
 
-    monkeypatch.setattr(pipeline_mod, "run_swarm", fake_run_swarm)
+    monkeypatch.setattr(pipeline_mod, "stream_swarm", fake_stream_swarm)
 
     write_calls: list[dict[str, Any]] = []
     real_write = pipeline_mod.EvalPipeline.write
