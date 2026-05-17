@@ -35,6 +35,28 @@ class _StubClient:
         self._config = GyroscopeConfig(api_key="test", llm=LLMConfig())
         self._array_iter = iter(self.array_returns)
 
+    @property
+    def config(self) -> GyroscopeConfig:
+        return self._config
+
+    def model_for(self, role: str) -> str:
+        cfg = self._config.llm
+        return {
+            "curator": cfg.curator_model,
+            "swarm": cfg.swarm_model,
+            "critic": cfg.critic_model,
+            "judge": cfg.judge_model,
+        }[role]
+
+    def temperature_for(self, role: str) -> float:
+        cfg = self._config.llm
+        return {
+            "curator": cfg.temperature_curator,
+            "swarm": cfg.temperature_swarm,
+            "critic": cfg.temperature_critic,
+            "judge": cfg.temperature_critic,
+        }[role]
+
     async def complete_json_array(self, **kwargs: Any) -> list[dict[str, Any]]:
         self.array_calls.append(kwargs)
         try:

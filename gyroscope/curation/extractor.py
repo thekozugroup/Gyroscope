@@ -17,6 +17,7 @@ Each extractor:
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from collections.abc import Iterable
@@ -223,14 +224,23 @@ def _filter_citations(
 # ---------------------------------------------------------------------------
 
 
+def _default_identity() -> Identity:
+    return Identity(
+        role="Unspecified Role",
+        description="No source material available.",
+        mission="No mission defined.",
+    )
+
+
 async def extract_identity(chunks: list[Chunk], client: LLMClient) -> Identity:
-    """Build a single Identity from the top-N representative chunks."""
+    """Build a single Identity from the top-N representative chunks.
+
+    If the model emits a malformed payload that ``complete_json`` cannot
+    parse, fall back to the same default identity used for the empty-chunks
+    branch — a single bad output must not crash the curation phase.
+    """
     if not chunks:
-        return Identity(
-            role="Unspecified Role",
-            description="No source material available.",
-            mission="No mission defined.",
-        )
+        return _default_identity()
 
     representatives = chunks[:IDENTITY_REPRESENTATIVE_N]
     system = _identity_system_prompt()
@@ -240,16 +250,31 @@ async def extract_identity(chunks: list[Chunk], client: LLMClient) -> Identity:
         f"{_render_chunks(representatives)}"
     )
 
-    payload = await client.complete_json(
-        system=system,
-        user=user,
-        model=client._config.llm.curator_model,
-        temperature=client._config.llm.temperature_curator,
-        cache_system=True,
-    )
+    fallback_payload: dict[str, str] = {
+        "role": "Unspecified Role",
+        "description": "No source material available.",
+        "mission": "No mission defined.",
+    }
+    try:
+        payload = await client.complete_json(
+            system=system,
+            user=user,
+            model=client.model_for("curator"),
+            temperature=client.temperature_for("curator"),
+            cache_system=True,
+            strict=False,
+            default=fallback_payload,
+        )
+    except (ValueError, json.JSONDecodeError) as exc:
+        logger.warning("Identity extraction failed to parse model output: %s", exc)
+        return _default_identity()
 
     if not isinstance(payload, dict):
-        raise ValueError(f"Identity extraction expected an object, got {type(payload).__name__}")
+        logger.warning(
+            "Identity extraction expected an object, got %s; falling back to default.",
+            type(payload).__name__,
+        )
+        return _default_identity()
 
     try:
         return Identity(
@@ -258,8 +283,9 @@ async def extract_identity(chunks: list[Chunk], client: LLMClient) -> Identity:
             or "No description provided.",
             mission=str(payload.get("mission", "")).strip() or "No mission defined.",
         )
-    except ValidationError as exc:  # pragma: no cover - defensive
-        raise ValueError(f"Identity payload failed validation: {exc}") from exc
+    except ValidationError as exc:
+        logger.warning("Identity payload failed validation: %s; falling back to default.", exc)
+        return _default_identity()
 
 
 # ---------------------------------------------------------------------------
@@ -281,14 +307,15 @@ async def _run_batched_array(
         return []
 
     results: list[dict[str, Any]] = []
-    cfg = client._config.llm
+    model = client.model_for("curator")
+    temperature = client.temperature_for("curator")
     for batch in _batched(chunks, batch_size):
         user = f"{instruction}\n\n{_render_chunks(batch)}"
         raw = await client.complete_json_array(
             system=system_prompt,
             user=user,
-            model=cfg.curator_model,
-            temperature=cfg.temperature_curator,
+            model=model,
+            temperature=temperature,
             cache_system=True,
         )
         if not isinstance(raw, list):

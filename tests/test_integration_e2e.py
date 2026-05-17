@@ -33,6 +33,28 @@ class FakeLLM:
     def __init__(self, config: GyroscopeConfig) -> None:
         self._config = config
 
+    @property
+    def config(self) -> GyroscopeConfig:
+        return self._config
+
+    def model_for(self, role: str) -> str:
+        cfg = self._config.llm
+        return {
+            "curator": cfg.curator_model,
+            "swarm": cfg.swarm_model,
+            "critic": cfg.critic_model,
+            "judge": cfg.judge_model,
+        }[role]
+
+    def temperature_for(self, role: str) -> float:
+        cfg = self._config.llm
+        return {
+            "curator": cfg.temperature_curator,
+            "swarm": cfg.temperature_swarm,
+            "critic": cfg.temperature_critic,
+            "judge": cfg.temperature_critic,
+        }[role]
+
     async def __aenter__(self) -> "FakeLLM":
         return self
 
