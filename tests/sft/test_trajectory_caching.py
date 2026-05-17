@@ -92,3 +92,63 @@ def test_scenario_suffix_lists_selected_ids():
     suffix = build_scenario_suffix(s, golden)
     assert "PRN-0002" in suffix
     assert "PRC-0001" in suffix
+
+
+def test_prefix_cache_does_not_leak_across_distinct_goldens() -> None:
+    """Regression test for the id()-keyed cache bug found in round 8.
+
+    Builds golden A, primes the cache, drops the reference, garbage-collects,
+    then builds a different golden B and asserts B's prefix carries B's ids
+    rather than A's — even if CPython happens to recycle A's id() for B.
+    """
+    import gc
+
+    from gyroscope.sft.trajectory import build_stable_system_prefix
+
+    from .conftest import make_golden
+
+    a = make_golden()
+    # Tag A with a unique principle id we can search for.
+    a.principles[0].id = "PRN-AAAA"
+    a.principles[0].statement = "principle A unique marker"
+    prefix_a = build_stable_system_prefix(a)
+    assert "PRN-AAAA" in prefix_a
+
+    a_id = id(a)
+    del a
+    gc.collect()
+
+    # Build B with a different unique marker. We do NOT control whether
+    # Python reuses the previous id, but the content-keyed cache must not
+    # confuse B for A regardless of that choice.
+    b = make_golden()
+    b.principles[0].id = "PRN-BBBB"
+    b.principles[0].statement = "principle B unique marker"
+
+    prefix_b = build_stable_system_prefix(b)
+    assert "PRN-BBBB" in prefix_b, (
+        f"prefix B leaked stale content from A (id reuse: {id(b) == a_id}); "
+        f"got prefix that contains PRN-AAAA={'PRN-AAAA' in prefix_b!r}"
+    )
+    assert "PRN-AAAA" not in prefix_b, "prefix B contains A's principle id"
+    assert prefix_a != prefix_b
+
+
+def test_prefix_cache_collapses_identical_distinct_instances() -> None:
+    """Two distinct GoldenDocument instances with the SAME content must
+    share the same memoized prefix string object — that's the upside of
+    content-keying.
+    """
+    from gyroscope.sft.trajectory import build_stable_system_prefix
+
+    from .conftest import make_golden
+
+    a = make_golden()
+    b = make_golden()
+    assert a is not b
+
+    pa = build_stable_system_prefix(a)
+    pb = build_stable_system_prefix(b)
+
+    # Same content → same memoized string object (cache hit on second call).
+    assert pa is pb, "content-keyed cache should hand out the same string for equal content"

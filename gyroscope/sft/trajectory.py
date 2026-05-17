@@ -73,12 +73,13 @@ def _selected_procedure(golden: GoldenDocument, scenario: Scenario) -> Procedure
     return None
 
 
-# LRU-style bounded cache keyed by id(golden). Bounded so a long-running
-# process that ingests many corpora cannot leak prefixes indefinitely. The
-# id() key is safe because callers reuse the same GoldenDocument instance
-# across all workers in a single run; the cap is overridable so a library
-# user hosting many concurrent corpora can grow it without monkey-patching.
-_PREFIX_CACHE: dict[int, str] = {}
+# Content-keyed cache so two distinct GoldenDocument instances with the
+# same content share the same memoized prefix string. The previous version
+# was keyed on ``id(golden)`` which is UNSAFE: CPython recycles object
+# addresses after garbage collection, so a fresh GoldenDocument could
+# silently inherit a stale predecessor's cached prefix — leaking one
+# corpus's identity/principles into another corpus's training run.
+_PREFIX_CACHE: dict[str, str] = {}
 _PREFIX_CACHE_MAX: int = int(os.environ.get("GYROSCOPE_PREFIX_CACHE_MAX", "8"))
 
 
@@ -94,7 +95,44 @@ def set_prefix_cache_max(n: int) -> None:
     _PREFIX_CACHE_MAX = n
 
 
-def _prefix_cache_set(key: int, value: str) -> None:
+def _prefix_cache_key(golden: GoldenDocument) -> str:
+    """Stable content fingerprint for the cache.
+
+    Hashes the role + every principle/procedure/knowledge/vocabulary/
+    anti-pattern id (plus the role mission). Two distinct objects with the
+    same content collapse to the same entry; two objects with the same
+    ``id()`` but different content do NOT collide.
+    """
+    import hashlib
+
+    h = hashlib.blake2b(digest_size=16)
+    h.update(golden.identity.role.encode("utf-8"))
+    h.update(b"\x00")
+    h.update(golden.identity.mission.encode("utf-8"))
+    h.update(b"\x00")
+    for p in golden.principles:
+        h.update(p.id.encode("utf-8"))
+        h.update(b"|")
+        h.update(p.statement.encode("utf-8"))
+        h.update(b"\x00")
+    for proc in golden.procedures:
+        h.update(proc.id.encode("utf-8"))
+        h.update(b"|")
+        h.update(proc.name.encode("utf-8"))
+        h.update(b"\x00")
+    for k in golden.knowledge:
+        h.update(k.id.encode("utf-8"))
+        h.update(b"\x00")
+    for v in golden.vocabulary:
+        h.update(v.term.encode("utf-8"))
+        h.update(b"\x00")
+    for a in golden.anti_patterns:
+        h.update(a.id.encode("utf-8"))
+        h.update(b"\x00")
+    return h.hexdigest()
+
+
+def _prefix_cache_set(key: str, value: str) -> None:
     if len(_PREFIX_CACHE) >= _PREFIX_CACHE_MAX:
         # Drop the oldest entry — insertion order is preserved in py3.7+.
         oldest = next(iter(_PREFIX_CACHE))
@@ -111,14 +149,13 @@ def build_stable_system_prefix(golden: GoldenDocument) -> str:
     are NOT included here — they go in the user turn via
     :func:`build_scenario_suffix`.
 
-    The result is memoized in a small bounded cache keyed by ``id(golden)``,
-    so a run that builds N trajectories sharing the same golden document
-    pays the concatenation cost ONCE and every worker hands the same
-    immutable string object to the Anthropic client. The cache is capped
-    at :data:`_PREFIX_CACHE_MAX` entries so long-running processes that
-    rotate through many corpora cannot leak prefixes indefinitely.
+    The result is memoized in a small bounded cache keyed by a content
+    fingerprint of the GoldenDocument (role + section ids), so cache hits
+    cannot leak content across distinct corpora even when Python recycles
+    the underlying object id. Capped at :data:`_PREFIX_CACHE_MAX` entries.
     """
-    cached = _PREFIX_CACHE.get(id(golden))
+    cache_key = _prefix_cache_key(golden)
+    cached = _PREFIX_CACHE.get(cache_key)
     if cached is not None:
         return cached
     parts: list[str] = []
@@ -166,7 +203,7 @@ def build_stable_system_prefix(golden: GoldenDocument) -> str:
         "- Ask a clarifying question only when essential."
     )
     result = "\n".join(parts)
-    _prefix_cache_set(id(golden), result)
+    _prefix_cache_set(cache_key, result)
     return result
 
 
