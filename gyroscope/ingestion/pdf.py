@@ -16,7 +16,10 @@ removed from the per-page text.
 from __future__ import annotations
 
 import asyncio
+import atexit
+import os
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +30,48 @@ from gyroscope.core.models import Document, DocumentKind
 from gyroscope.ingestion.base import Loader, is_url
 
 logger = get_logger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Dedicated thread pool for PDF parsing.
+#
+# Without this, ``asyncio.to_thread`` would queue PDF parses onto the default
+# loop executor (``min(32, os.cpu_count()+4)`` workers shared with every
+# other ``to_thread`` caller in the process). Ingesting a directory of many
+# PDFs would then starve unrelated background work. A small, dedicated pool
+# isolates PDF work and lets ops tune the parallelism explicitly.
+# ---------------------------------------------------------------------------
+
+
+def _default_pdf_workers() -> int:
+    return max(2, min(8, os.cpu_count() or 4))
+
+
+_PDF_EXECUTOR: ThreadPoolExecutor = ThreadPoolExecutor(
+    max_workers=_default_pdf_workers(),
+    thread_name_prefix="gyroscope-pdf",
+)
+atexit.register(_PDF_EXECUTOR.shutdown, wait=False)
+
+
+def set_pdf_executor_workers(n: int) -> ThreadPoolExecutor:
+    """Resize the dedicated PDF parsing thread pool.
+
+    Rebuilds ``_PDF_EXECUTOR`` with the requested worker count, shutting the
+    previous executor down (without waiting) so currently-running parses
+    complete on the old workers. Returns the new executor.
+    """
+    if n <= 0:
+        raise ValueError("PDF executor worker count must be positive.")
+    global _PDF_EXECUTOR
+    old = _PDF_EXECUTOR
+    _PDF_EXECUTOR = ThreadPoolExecutor(
+        max_workers=n,
+        thread_name_prefix="gyroscope-pdf",
+    )
+    atexit.register(_PDF_EXECUTOR.shutdown, wait=False)
+    old.shutdown(wait=False)
+    return _PDF_EXECUTOR
 
 
 # ---------------------------------------------------------------------------
@@ -219,5 +264,6 @@ class PdfLoader(Loader):
 
     async def load(self, source: str) -> list[Document]:
         path = Path(source)
-        doc = await asyncio.to_thread(_load_pdf_sync, path)
+        loop = asyncio.get_running_loop()
+        doc = await loop.run_in_executor(_PDF_EXECUTOR, _load_pdf_sync, path)
         return [doc]

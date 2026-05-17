@@ -202,8 +202,9 @@ async def test_extract_procedures_builds_steps():
             ]
         ]
     )
-    out = await extract_procedures(chunks, client, batch_size=10)
+    out, dropped = await extract_procedures(chunks, client, batch_size=10)
     assert len(out) == 1
+    assert dropped == 1  # the empty-steps procedure was dropped
     proc = out[0]
     assert proc.id == "PRC-0001"
     assert [s.order for s in proc.steps] == [1, 2, 3]

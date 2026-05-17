@@ -5,9 +5,11 @@ has no role, *or* every extractable category is empty, every downstream
 phase is broken — so we fail loud (``EmptyBoKError``) rather than silently
 write an empty ``golden.md``.
 
-The extractor must also expose ``last_dropped_procedures_count`` so the
-curation pipeline can include dropped-procedure telemetry in its run
-report without us having to plumb it through the public signature.
+The extractor must also surface the per-call count of zero-step procedures
+it dropped so the curation pipeline can include that telemetry in its run
+report. Earlier revisions exposed this via a module-level global; we now
+return it as the second element of the ``extract_procedures`` tuple to
+avoid races when two extractions run concurrently.
 """
 
 from __future__ import annotations
@@ -19,7 +21,6 @@ import pytest
 
 from gyroscope.core.config import CurationConfig, GyroscopeConfig, LLMConfig
 from gyroscope.core.models import Chunk, Identity, Principle
-from gyroscope.curation import extractor as extractor_module
 from gyroscope.curation.extractor import extract_procedures
 from gyroscope.curation.synthesizer import (
     EmptyBoKError,
@@ -79,7 +80,7 @@ def test_empty_bok_error_is_runtime_error_subclass():
 
 
 # ---------------------------------------------------------------------------
-# last_dropped_procedures_count
+# extract_procedures dropped-count telemetry
 # ---------------------------------------------------------------------------
 
 
@@ -144,15 +145,15 @@ async def test_extract_procedures_counts_dropped_zero_step_procedures():
             ]
         ]
     )
-    out = await extract_procedures(chunks, client, batch_size=10)
+    out, dropped = await extract_procedures(chunks, client, batch_size=10)
     assert len(out) == 1
     # Two procedures had zero steps and were dropped this call.
-    assert extractor_module.last_dropped_procedures_count == 2
+    assert dropped == 2
 
 
 @pytest.mark.asyncio
-async def test_extract_procedures_resets_counter_each_call():
-    """Counter is per-call, not cumulative."""
+async def test_extract_procedures_dropped_count_is_per_call():
+    """Each call reports only the procedures it dropped, not a cumulative total."""
     # First call drops one.
     chunks = _chunks(1)
     client1 = _StubClient(
@@ -167,10 +168,10 @@ async def test_extract_procedures_resets_counter_each_call():
             ]
         ]
     )
-    await extract_procedures(chunks, client1, batch_size=10)
-    assert extractor_module.last_dropped_procedures_count == 1
+    _, dropped1 = await extract_procedures(chunks, client1, batch_size=10)
+    assert dropped1 == 1
 
-    # Second call drops zero — counter must reset.
+    # Second call drops zero.
     client2 = _StubClient(
         array_returns=[
             [
@@ -183,5 +184,5 @@ async def test_extract_procedures_resets_counter_each_call():
             ]
         ]
     )
-    await extract_procedures(chunks, client2, batch_size=10)
-    assert extractor_module.last_dropped_procedures_count == 0
+    _, dropped2 = await extract_procedures(chunks, client2, batch_size=10)
+    assert dropped2 == 0

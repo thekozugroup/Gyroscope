@@ -47,27 +47,41 @@ class CurationPipeline:
         curation_cfg = self._config.curation
         logger.info("Chunking %d documents", len(documents))
         chunker = SemanticChunker(curation_cfg)
-        chunks: list[Chunk] = chunker.chunk_documents(documents)
+        # Both the chunker and the deduplicator are CPU-bound sync code; run
+        # them on the default thread executor so we don't block the event
+        # loop (keeping the dedicated PDF executor untouched).
+        chunks: list[Chunk] = await asyncio.to_thread(chunker.chunk_documents, documents)
         logger.info("Produced %d raw chunks", len(chunks))
 
         logger.info("Deduplicating chunks (threshold=%.2f)", curation_cfg.dedup_threshold)
         deduper = Deduplicator(curation_cfg)
-        chunks = deduper.dedupe(chunks)
+        chunks = await asyncio.to_thread(deduper.dedupe, chunks)
         logger.info("Retained %d chunks after dedup", len(chunks))
 
         # Run the six extractors in parallel; the LLMClient semaphore caps
         # concurrent in-flight requests.
         logger.info("Extracting identity / principles / procedures / knowledge / vocabulary / anti-patterns")
-        identity, principles, procedures, knowledge, vocabulary, anti_patterns = (
-            await asyncio.gather(
-                extract_identity(chunks, client),
-                extract_principles(chunks, client),
-                extract_procedures(chunks, client),
-                extract_knowledge(chunks, client),
-                extract_vocabulary(chunks, client),
-                extract_anti_patterns(chunks, client),
-            )
+        (
+            identity,
+            principles,
+            procedures_result,
+            knowledge,
+            vocabulary,
+            anti_patterns,
+        ) = await asyncio.gather(
+            extract_identity(chunks, client),
+            extract_principles(chunks, client),
+            extract_procedures(chunks, client),
+            extract_knowledge(chunks, client),
+            extract_vocabulary(chunks, client),
+            extract_anti_patterns(chunks, client),
         )
+        procedures, dropped_procedures = procedures_result
+        if dropped_procedures:
+            logger.info(
+                "Dropped %d procedures that parsed with zero valid steps",
+                dropped_procedures,
+            )
 
         extracts = ExtractorOutputs(
             identity=identity,

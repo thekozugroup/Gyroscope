@@ -17,6 +17,7 @@ Each extractor:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -50,18 +51,6 @@ DEFAULT_BATCH_SIZE = 24
 # Top-N chunks used to seed Identity extraction. The first chunks of a
 # document typically carry titles, scope, and intro material.
 IDENTITY_REPRESENTATIVE_N = 12
-
-
-# ---------------------------------------------------------------------------
-# Per-call telemetry. ``extract_procedures`` updates this on every call (NOT
-# cumulative) so the curation pipeline can read it for its run report
-# without us having to plumb a return tuple through the extractor signature.
-# ---------------------------------------------------------------------------
-
-last_dropped_procedures_count: int = 0
-"""Number of procedures dropped by the most recent ``extract_procedures``
-call because they parsed with zero valid steps. Reset at the start of each
-call — read it immediately after the await."""
 
 
 # ---------------------------------------------------------------------------
@@ -302,14 +291,22 @@ async def _run_batched_array(
     batch_size: int,
     instruction: str,
 ) -> list[dict[str, Any]]:
-    """Call the LLM once per batch and concatenate the resulting arrays."""
+    """Issue one LLM call per batch concurrently and flatten the arrays.
+
+    Batches are dispatched in parallel via ``asyncio.gather`` so a single
+    extractor can saturate the ``LLMClient`` semaphore on its own; the
+    semaphore already caps in-flight requests across all extractors, so no
+    additional limiter is needed here. ``gather`` preserves input order,
+    which we rely on when flattening to keep deterministic id assignment.
+    """
     if not chunks:
         return []
 
-    results: list[dict[str, Any]] = []
     model = client.model_for("curator")
     temperature = client.temperature_for("curator")
-    for batch in _batched(chunks, batch_size):
+    batches = _batched(chunks, batch_size)
+
+    async def _run_one(batch: list[Chunk]) -> list[dict[str, Any]]:
         user = f"{instruction}\n\n{_render_chunks(batch)}"
         raw = await client.complete_json_array(
             system=system_prompt,
@@ -320,10 +317,14 @@ async def _run_batched_array(
         )
         if not isinstance(raw, list):
             logger.warning("Batched extractor returned non-list payload; skipping batch.")
-            continue
-        for entry in raw:
-            if isinstance(entry, dict):
-                results.append(entry)
+            return []
+        return [entry for entry in raw if isinstance(entry, dict)]
+
+    batch_results = await asyncio.gather(*(_run_one(batch) for batch in batches))
+
+    results: list[dict[str, Any]] = []
+    for entries in batch_results:
+        results.extend(entries)
     return results
 
 
@@ -394,13 +395,15 @@ async def extract_procedures(
     client: LLMClient,
     *,
     batch_size: int = DEFAULT_BATCH_SIZE,
-) -> list[Procedure]:
-    # Reset the per-call counter at the start of every invocation so callers
-    # can read it immediately after the await without seeing stale state
-    # from a previous call.
-    global last_dropped_procedures_count
-    last_dropped_procedures_count = 0
+) -> tuple[list[Procedure], int]:
+    """Extract procedures from chunks.
 
+    Returns a ``(procedures, dropped_zero_step_count)`` tuple. The second
+    element is the number of procedures emitted by the model that we had to
+    drop because they parsed with zero valid steps — surfaced for telemetry
+    rather than via a module-level global (which would race when two
+    extractions ran concurrently).
+    """
     known = {c.id for c in chunks}
     raw = await _run_batched_array(
         chunks=chunks,
@@ -449,8 +452,7 @@ async def extract_procedures(
             )
         except (ValidationError, ValueError, TypeError) as exc:
             logger.warning("Skipping malformed procedure %s: %s", item.get("id"), exc)
-    last_dropped_procedures_count = dropped
-    return out
+    return out, dropped
 
 
 # ---------------------------------------------------------------------------
