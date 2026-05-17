@@ -45,7 +45,7 @@ async def test_trajectory_sequencing_and_critic(monkeypatch):
     user_replies = iter(["First user msg", "Second user msg"])
     assistant_replies = iter(["First assist", "Second assist"])
 
-    async def fake_planner(scen, gold, client):
+    async def fake_planner(scen, gold, client, config=None):
         return {
             "principle_ids": ["PRN-0001"],
             "procedure_id": "PRC-0001",
@@ -59,7 +59,7 @@ async def test_trajectory_sequencing_and_critic(monkeypatch):
     async def fake_assistant(**kwargs: Any) -> str:
         return next(assistant_replies)
 
-    async def fake_critic(trj, gold, client):
+    async def fake_critic(trj, gold, client, **kwargs: Any):
         return 0.9, "looks good"
 
     monkeypatch.setattr(traj_mod, "_planner_step", fake_planner)
@@ -67,8 +67,12 @@ async def test_trajectory_sequencing_and_critic(monkeypatch):
     monkeypatch.setattr(traj_mod, "_assistant_turn", fake_assistant)
     monkeypatch.setattr(traj_mod, "_critic_score", fake_critic)
 
+    # use_planner=True so the patched fake_planner gets to set the principle
+    # ids the test asserts on.
+    cfg = SFTConfig(use_planner=True, max_turns=4)
     t = await build_trajectory(
-        scenario, golden, client=object(), max_turns=4, personas=personas  # type: ignore[arg-type]
+        scenario, golden, client=object(), max_turns=4, personas=personas,  # type: ignore[arg-type]
+        config=cfg,
     )
 
     roles = [m.role for m in t.messages]
@@ -96,7 +100,7 @@ async def test_user_end_signal_terminates_conversation(monkeypatch):
     user_replies = iter(["opener", "<END>"])
     assistant_replies = iter(["only assistant turn"])
 
-    async def fake_planner(scen, gold, client):
+    async def fake_planner(scen, gold, client, config=None):
         return {
             "principle_ids": [],
             "procedure_id": None,
@@ -110,7 +114,7 @@ async def test_user_end_signal_terminates_conversation(monkeypatch):
     async def fake_assistant(**kwargs: Any) -> str:
         return next(assistant_replies)
 
-    async def fake_critic(trj, gold, client):
+    async def fake_critic(trj, gold, client, **kwargs: Any):
         return 0.95, "ok"
 
     monkeypatch.setattr(traj_mod, "_planner_step", fake_planner)
@@ -138,7 +142,7 @@ async def test_repair_pass_re_rolls_last_assistant_when_below_threshold(monkeypa
     # First critic call below threshold; second still below; third above.
     critic_scores = iter([(0.3, "bad-1"), (0.5, "bad-2"), (0.85, "good")])
 
-    async def fake_planner(scen, gold, client):
+    async def fake_planner(scen, gold, client, config=None):
         return {
             "principle_ids": [],
             "procedure_id": None,
@@ -152,7 +156,7 @@ async def test_repair_pass_re_rolls_last_assistant_when_below_threshold(monkeypa
     async def fake_assistant(**kwargs: Any) -> str:
         return next(assistant_replies)
 
-    async def fake_critic(trj, gold, client):
+    async def fake_critic(trj, gold, client, **kwargs: Any):
         return next(critic_scores)
 
     monkeypatch.setattr(traj_mod, "_planner_step", fake_planner)
@@ -182,7 +186,7 @@ async def test_repair_loop_respects_max_attempts(monkeypatch):
     # Both critic calls below threshold — repair attempt cap is 1.
     critic_scores = iter([(0.1, "n1"), (0.2, "n2")])
 
-    async def fake_planner(scen, gold, client):
+    async def fake_planner(scen, gold, client, config=None):
         return {
             "principle_ids": [],
             "procedure_id": None,
@@ -196,7 +200,7 @@ async def test_repair_loop_respects_max_attempts(monkeypatch):
     async def fake_assistant(**kwargs: Any) -> str:
         return next(assistant_replies)
 
-    async def fake_critic(trj, gold, client):
+    async def fake_critic(trj, gold, client, **kwargs: Any):
         return next(critic_scores)
 
     monkeypatch.setattr(traj_mod, "_planner_step", fake_planner)

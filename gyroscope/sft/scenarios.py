@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import random
 from typing import Any, Literal, get_args
@@ -206,14 +207,19 @@ async def generate_scenarios(
     anchors = _round_robin_anchors(_build_anchors(golden), n_total)
     proc_by_id = {p.id: p for p in golden.procedures}
 
-    scenarios: list[Scenario] = []
+    # Fan out scenario generation in parallel. The LLMClient semaphore (sized
+    # by ``LLMConfig.max_concurrent``) caps in-flight calls, so we don't need
+    # an extra bound here. Sequential ``await`` previously left the semaphore
+    # idle for almost the entire run — a 5000-scenario job that should take
+    # minutes was taking hours.
+    coros: list[Any] = []
     for i in range(n_total):
         difficulty = difficulty_pool[i] if i < len(difficulty_pool) else "medium"
         anchor_pid, principle_ids = anchors[i]
         procedure = proc_by_id.get(anchor_pid) if anchor_pid else None
         persona = personas[i % len(personas)]
-        scenarios.append(
-            await _generate_one_scenario(
+        coros.append(
+            _generate_one_scenario(
                 index=i + 1,
                 golden=golden,
                 persona=persona,
@@ -223,6 +229,10 @@ async def generate_scenarios(
                 client=client,
             )
         )
+    # ``asyncio.gather`` preserves the input order of results, so the output
+    # list is already in scenario-index order. Tests and downstream code rely
+    # on ``scenarios[0].id == "SCN-0001"`` etc.
+    scenarios: list[Scenario] = list(await asyncio.gather(*coros))
     return scenarios
 
 

@@ -1,7 +1,7 @@
 """Short-lived 4-agent rollout that produces a single Trajectory.
 
 Agents:
-- Planner   — picks an outline and target principle/procedure ids.
+- Planner   — picks an outline and target principle/procedure ids (optional).
 - User-sim  — plays the user (persona-consistent, multi-turn).
 - Assistant — plays the role using the golden doc as context.
 - Critic    — scores principle adherence, no hallucination, format.
@@ -9,6 +9,14 @@ Agents:
 A single repair pass (re-roll the last assistant turn) is attempted when the
 critic score falls below `SFTConfig.critic_min_score`, up to
 `SFTConfig.max_repair_attempts` times.
+
+System-prompt design (cache-friendly):
+    The assistant and critic share a *stable* system prefix that is identical
+    across every scenario sharing the same ``GoldenDocument`` — this lets
+    Anthropic prompt caching reuse the cached prefix for every assistant /
+    critic call (cache hits across ~60k calls per 5k-trajectory run). The
+    per-scenario principle/procedure selection is injected into the *user*
+    message instead, where caching does not matter.
 """
 
 from __future__ import annotations
@@ -66,43 +74,50 @@ def _selected_procedure(
     return None
 
 
-def build_system_prompt(golden: GoldenDocument, scenario: Scenario) -> str:
-    """Construct the assistant's system prompt for a scenario."""
+def build_stable_system_prefix(golden: GoldenDocument) -> str:
+    """Construct the assistant's *scenario-independent* system prefix.
+
+    This string is identical for every trajectory that shares ``golden`` so it
+    can hit the Anthropic prompt cache across every assistant + critic LLM
+    call in a run. Per-scenario selections (selected principles / procedure)
+    are NOT included here — they go in the user turn via
+    :func:`build_scenario_suffix`.
+    """
     parts: list[str] = []
     parts.append(f"# Identity\nYou are: {golden.identity.role}.")
     parts.append(golden.identity.description)
     parts.append(f"\n# Mission\n{golden.identity.mission}")
 
-    principles = _select_principles(golden, scenario)
-    if principles:
-        parts.append("\n# Principles you MUST follow")
-        for p in principles:
+    if golden.principles:
+        parts.append("\n# Principles (full list)")
+        for p in golden.principles:
             parts.append(f"- [{p.id}] {p.statement}")
 
-    procedure = _selected_procedure(golden, scenario)
-    if procedure is not None:
-        parts.append(f"\n# Relevant procedure: [{procedure.id}] {procedure.name}")
-        parts.append(f"Purpose: {procedure.purpose}")
-        if procedure.preconditions:
-            parts.append("Preconditions:")
-            for pc in procedure.preconditions:
-                parts.append(f"- {pc}")
-        parts.append("Steps:")
-        for s in sorted(procedure.steps, key=lambda x: x.order):
-            parts.append(f"  {s.order}. {s.action}")
-        if procedure.postconditions:
-            parts.append("Postconditions:")
-            for pc in procedure.postconditions:
-                parts.append(f"- {pc}")
+    if golden.procedures:
+        parts.append("\n# Procedures (full list)")
+        for procedure in golden.procedures:
+            parts.append(f"\n## [{procedure.id}] {procedure.name}")
+            parts.append(f"Purpose: {procedure.purpose}")
+            if procedure.preconditions:
+                parts.append("Preconditions:")
+                for pc in procedure.preconditions:
+                    parts.append(f"- {pc}")
+            parts.append("Steps:")
+            for s in sorted(procedure.steps, key=lambda x: x.order):
+                parts.append(f"  {s.order}. {s.action}")
+            if procedure.postconditions:
+                parts.append("Postconditions:")
+                for pc in procedure.postconditions:
+                    parts.append(f"- {pc}")
 
     if golden.vocabulary:
         parts.append("\n# Vocabulary")
-        for v in golden.vocabulary[:20]:
+        for v in golden.vocabulary:
             parts.append(f"- {v.term}: {v.definition}")
 
     if golden.anti_patterns:
         parts.append("\n# Anti-patterns to avoid")
-        for a in golden.anti_patterns[:10]:
+        for a in golden.anti_patterns:
             parts.append(f"- [{a.id}] {a.description} — instead: {a.correction}")
 
     parts.append(
@@ -113,6 +128,42 @@ def build_system_prompt(golden: GoldenDocument, scenario: Scenario) -> str:
         "- Ask a clarifying question only when essential."
     )
     return "\n".join(parts)
+
+
+def build_scenario_suffix(scenario: Scenario, golden: GoldenDocument) -> str:
+    """Per-scenario focusing block prepended to the first user turn.
+
+    Lists which principle ids / procedure id this trajectory should
+    demonstrate. Kept short so it doesn't dilute the cached prefix.
+    """
+    principles = _select_principles(golden, scenario)
+    procedure = _selected_procedure(golden, scenario)
+    lines: list[str] = ["# Scenario focus"]
+    if principles:
+        lines.append("Principles to demonstrate this turn:")
+        for p in principles:
+            lines.append(f"- [{p.id}] {p.statement}")
+    if procedure is not None:
+        lines.append(f"Procedure to follow: [{procedure.id}] {procedure.name}")
+    if len(lines) == 1:
+        lines.append("(no specific focus — answer naturally within the role.)")
+    return "\n".join(lines)
+
+
+def build_system_prompt(golden: GoldenDocument, scenario: Scenario) -> str:
+    """Backwards-compatible composition of stable prefix + scenario suffix.
+
+    New code paths prefer :func:`build_stable_system_prefix` (cached) +
+    :func:`build_scenario_suffix` (injected into the first user turn) so
+    Anthropic prompt caching is effective across scenarios. This combined
+    form is retained for the recorded ``Trajectory.system`` field and for
+    the legacy public API.
+    """
+    return (
+        build_stable_system_prefix(golden)
+        + "\n\n"
+        + build_scenario_suffix(scenario, golden)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -151,15 +202,19 @@ def _planner_user_prompt(scenario: Scenario, golden: GoldenDocument) -> str:
 
 
 async def _planner_step(
-    scenario: Scenario, golden: GoldenDocument, client: LLMClient
+    scenario: Scenario,
+    golden: GoldenDocument,
+    client: LLMClient,
+    config: SFTConfig | None = None,
 ) -> dict[str, Any]:
     """Decide outline + which principles/procedures must be demonstrated."""
+    cfg = config or SFTConfig()
     try:
         obj = await client.complete_json(
             system=_PLANNER_SYSTEM,
             user=_planner_user_prompt(scenario, golden),
             cache_system=True,
-            temperature=0.2,
+            temperature=cfg.temperature_planner,
         )
     except Exception as exc:
         logger.warning("Planner LLM call failed (%s); using scenario defaults.", exc)
@@ -268,8 +323,10 @@ async def _user_sim_turn(
     persona: Persona | None = None,
     turn_index: int = 0,
     max_turns: int = 3,
+    config: SFTConfig | None = None,
 ) -> str:
     """Produce the next user message. May return `<END>` to signal completion."""
+    cfg = config or SFTConfig()
     user_prompt = _user_sim_user_prompt(
         scenario=scenario,
         persona=persona,
@@ -282,7 +339,7 @@ async def _user_sim_turn(
             system=_USER_SIM_SYSTEM,
             user=user_prompt,
             cache_system=False,
-            temperature=0.8,
+            temperature=cfg.temperature_user_sim,
         )
     except Exception as exc:
         logger.warning("User-sim LLM call failed (%s); ending conversation.", exc)
@@ -295,17 +352,41 @@ async def _user_sim_turn(
 # ---------------------------------------------------------------------------
 
 
+def _inject_scenario_suffix(
+    history: list[TrajectoryMessage], scenario_suffix: str
+) -> list[LLMMessage]:
+    """Build the assistant API message list, prepending the per-scenario focus
+    block to the *first* user message so the system prompt itself stays
+    byte-identical across scenarios (cache hit territory)."""
+    api_messages: list[LLMMessage] = []
+    first_user_seen = False
+    for m in history:
+        if m.role not in ("user", "assistant"):
+            continue
+        content = m.content
+        if not first_user_seen and m.role == "user":
+            content = f"{scenario_suffix}\n\n{content}" if scenario_suffix else content
+            first_user_seen = True
+        api_messages.append(LLMMessage(role=m.role, content=content))
+    return api_messages
+
+
 async def _assistant_turn(
     *,
     history: list[TrajectoryMessage],
     system_prompt: str,
     client: LLMClient,
+    scenario_suffix: str = "",
+    config: SFTConfig | None = None,
 ) -> str:
-    """Produce the next assistant message given the role's system prompt."""
-    api_messages: list[LLMMessage] = []
-    for m in history:
-        if m.role in ("user", "assistant"):
-            api_messages.append(LLMMessage(role=m.role, content=m.content))
+    """Produce the next assistant message given the role's system prompt.
+
+    ``system_prompt`` should be the *stable* prefix (same for every scenario
+    that shares a golden document); ``scenario_suffix`` is folded into the
+    first user message so prompt caching can re-use the prefix across calls.
+    """
+    cfg = config or SFTConfig()
+    api_messages = _inject_scenario_suffix(history, scenario_suffix)
     if not api_messages or api_messages[-1].role != "user":
         # Defensive: assistant should only speak after a user message.
         return ""
@@ -314,7 +395,7 @@ async def _assistant_turn(
             system=system_prompt,
             messages=api_messages,
             cache_system=True,
-            temperature=0.7,
+            temperature=cfg.temperature_assistant,
         )
     except Exception as exc:
         logger.warning("Assistant LLM call failed (%s); emitting empty turn.", exc)
@@ -344,8 +425,23 @@ Return JSON only. Schema:
 """.strip()
 
 
-def _critic_user_prompt(system_prompt: str, messages: list[TrajectoryMessage]) -> str:
-    lines: list[str] = ["SYSTEM PROMPT:", system_prompt, "", "TRANSCRIPT:"]
+def _critic_user_prompt(
+    scenario_suffix: str, messages: list[TrajectoryMessage]
+) -> str:
+    """Build the critic *user* message.
+
+    The stable critic system prompt is the SAME for every scenario (so it
+    hits the prompt cache). The per-scenario context — the focusing block
+    listing the selected principle / procedure ids — is folded into the
+    user message instead. This keeps the system prefix byte-identical
+    across all critic calls in a run.
+    """
+    lines: list[str] = []
+    if scenario_suffix:
+        lines.append("SCENARIO CONTEXT:")
+        lines.append(scenario_suffix)
+        lines.append("")
+    lines.append("TRANSCRIPT:")
     for m in messages:
         if m.role == "user":
             lines.append(f"USER: {m.content}")
@@ -357,16 +453,34 @@ def _critic_user_prompt(system_prompt: str, messages: list[TrajectoryMessage]) -
 
 
 async def _critic_score(
-    trajectory: Trajectory, golden: GoldenDocument, client: LLMClient
+    trajectory: Trajectory,
+    golden: GoldenDocument,
+    client: LLMClient,
+    *,
+    stable_system_prefix: str | None = None,
+    scenario_suffix: str = "",
+    config: SFTConfig | None = None,
 ) -> tuple[float, str]:
-    """Score the trajectory. Returns (score in [0,1], notes)."""
-    _ = golden  # currently unused; system prompt already encodes the relevant golden content
+    """Score the trajectory. Returns (score in [0,1], notes).
+
+    The critic uses the same stable-prefix / scenario-suffix split as the
+    assistant turn, so its system prompt is identical across every scenario
+    sharing the same ``GoldenDocument`` (cache hit territory).
+    """
+    cfg = config or SFTConfig()
+    critic_system = _CRITIC_SYSTEM
+    if stable_system_prefix is not None:
+        # Append the role's full identity / principles / procedures to the
+        # critic system prompt so the cached prefix is content-rich and the
+        # critic doesn't have to re-derive context from the transcript.
+        critic_system = _CRITIC_SYSTEM + "\n\n" + stable_system_prefix
+    _ = golden  # golden content already lives in stable_system_prefix
     try:
         obj = await client.complete_json(
-            system=_CRITIC_SYSTEM,
-            user=_critic_user_prompt(trajectory.system, trajectory.messages),
+            system=critic_system,
+            user=_critic_user_prompt(scenario_suffix, trajectory.messages),
             cache_system=True,
-            temperature=0.0,
+            temperature=cfg.temperature_critic,
         )
     except Exception as exc:
         logger.warning("Critic LLM call failed (%s); scoring 0.0.", exc)
@@ -406,35 +520,64 @@ def _is_end_signal(text: str) -> bool:
     return s == "<END>" or s.upper() == "<END>" or s.endswith("<END>")
 
 
+def _plan_from_scenario(scenario: Scenario, max_turns: int) -> dict[str, Any]:
+    """Build a planner-output-shaped dict directly from the scenario.
+
+    Used when ``SFTConfig.use_planner`` is False — the deterministic scenario
+    generator already picks the principle ids and procedure, so the planner
+    LLM call is pure overhead in steady-state runs.
+    """
+    return {
+        "principle_ids": list(scenario.principle_ids),
+        "procedure_id": scenario.procedure_id,
+        "outline": [f"Respond to: {scenario.prompt_seed}"],
+        "max_turns": max_turns,
+    }
+
+
 async def build_trajectory(
     scenario: Scenario,
     golden: GoldenDocument,
     client: LLMClient,
-    max_turns: int = 6,
+    max_turns: int | None = None,
     *,
     personas: list[Persona] | None = None,
     config: SFTConfig | None = None,
 ) -> Trajectory:
-    """Run the 4-agent rollout for one scenario and return a graded Trajectory.
+    """Run the (up to) 4-agent rollout for one scenario and return a graded
+    Trajectory.
 
-    `max_turns` bounds the number of *user* turns (so the conversation has at most
-    `2 * max_turns` messages excluding the system prompt). The planner may request
-    a smaller bound; the smaller of the two is used.
+    ``max_turns`` bounds the number of *user* turns (so the conversation has
+    at most ``2 * max_turns`` messages excluding the system prompt). When the
+    planner runs it may request a smaller bound; the smaller of the two is
+    used. When ``max_turns`` is None the value falls back to
+    ``config.max_turns`` (which itself defaults to 6).
     """
     cfg = config or SFTConfig()
-    plan = await _planner_step(scenario, golden, client)
-    bound = min(max_turns, int(plan.get("max_turns", max_turns)))
+    effective_max_turns = cfg.max_turns if max_turns is None else max_turns
+
+    if cfg.use_planner:
+        plan = await _planner_step(scenario, golden, client, config=cfg)
+    else:
+        plan = _plan_from_scenario(scenario, effective_max_turns)
+
+    bound = min(effective_max_turns, int(plan.get("max_turns", effective_max_turns)))
     bound = max(1, bound)
 
     # Build a scenario-effective copy reflecting the planner's choices, used for
-    # system prompt construction.
+    # the per-scenario focus block.
     effective_scenario = scenario.model_copy(
         update={
             "principle_ids": plan["principle_ids"],
             "procedure_id": plan["procedure_id"],
         }
     )
-    system_prompt = build_system_prompt(golden, effective_scenario)
+    # Cache-friendly split: the *stable* prefix is identical across every
+    # scenario that shares ``golden``; the per-scenario focus block is folded
+    # into the first user message so the system prompt stays byte-identical
+    # and Anthropic prompt caching can serve every assistant/critic call.
+    stable_prefix = build_stable_system_prefix(golden)
+    scenario_suffix = build_scenario_suffix(effective_scenario, golden)
     persona = _persona_lookup(personas, scenario.persona_id)
 
     messages: list[TrajectoryMessage] = []
@@ -448,6 +591,7 @@ async def build_trajectory(
             persona=persona,
             turn_index=turn_index,
             max_turns=bound,
+            config=cfg,
         )
         if turn_index > 0 and _is_end_signal(user_text):
             break
@@ -459,7 +603,11 @@ async def build_trajectory(
         messages.append(TrajectoryMessage(role="user", content=user_text))
 
         assistant_text = await _assistant_turn(
-            history=messages, system_prompt=system_prompt, client=client
+            history=messages,
+            system_prompt=stable_prefix,
+            client=client,
+            scenario_suffix=scenario_suffix,
+            config=cfg,
         )
         messages.append(TrajectoryMessage(role="assistant", content=assistant_text))
 
@@ -471,15 +619,28 @@ async def build_trajectory(
         "difficulty": scenario.difficulty,
     }
 
+    # Record the *combined* prefix + suffix in Trajectory.system so the
+    # downstream writers (sharegpt/chatml/alpaca) and consumers see the full
+    # in-context system prompt, even though over the wire we shipped the two
+    # halves separately for caching.
+    full_system = stable_prefix + "\n\n" + scenario_suffix
+
     trajectory = Trajectory(
         id=_trajectory_id(scenario.id),
         scenario_id=scenario.id,
-        system=system_prompt,
+        system=full_system,
         messages=messages,
         tags=tags,
     )
 
-    score, notes = await _critic_score(trajectory, golden, client)
+    score, notes = await _critic_score(
+        trajectory,
+        golden,
+        client,
+        stable_system_prefix=stable_prefix,
+        scenario_suffix=scenario_suffix,
+        config=cfg,
+    )
     trajectory.quality_score = score
     trajectory.critic_notes = notes
 
@@ -503,12 +664,23 @@ async def build_trajectory(
             break
         history_before = trajectory.messages[:last_assist_idx]
         new_text = await _assistant_turn(
-            history=history_before, system_prompt=system_prompt, client=client
+            history=history_before,
+            system_prompt=stable_prefix,
+            client=client,
+            scenario_suffix=scenario_suffix,
+            config=cfg,
         )
         trajectory.messages[last_assist_idx] = TrajectoryMessage(
             role="assistant", content=new_text
         )
-        new_score, new_notes = await _critic_score(trajectory, golden, client)
+        new_score, new_notes = await _critic_score(
+            trajectory,
+            golden,
+            client,
+            stable_system_prefix=stable_prefix,
+            scenario_suffix=scenario_suffix,
+            config=cfg,
+        )
         repair_notes.append(f"repair#{attempts} score={new_score:.2f} :: {new_notes}")
         trajectory.quality_score = new_score
         trajectory.critic_notes = new_notes
@@ -521,6 +693,8 @@ async def build_trajectory(
 
 
 __all__ = [
+    "build_scenario_suffix",
+    "build_stable_system_prefix",
     "build_system_prompt",
     "build_trajectory",
 ]

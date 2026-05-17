@@ -35,7 +35,15 @@ class CurationConfig(BaseModel):
     chunk_target_tokens: int = 1200
     chunk_overlap_tokens: int = 100
     dedup_threshold: float = 0.85
-    """Jaccard similarity above which chunks are treated as duplicates."""
+    """Jaccard similarity above which chunks are treated as duplicates by the
+    MinHash chunk deduplicator. Higher = stricter (fewer collapses)."""
+    synthesizer_dedup_threshold: float = 0.8
+    """Token-set Jaccard similarity above which the synthesizer collapses
+    near-duplicate Principle / KnowledgeItem statements after extraction.
+    Kept separate from ``dedup_threshold`` because the synthesizer compares
+    short normalised statements rather than full chunk text, so the
+    appropriate threshold is typically lower (more aggressive). Higher =
+    stricter (fewer collapses); lower = more aggressive merging."""
     max_principles: int = 60
     max_procedures: int = 40
     max_knowledge_items: int = 400
@@ -55,6 +63,19 @@ class SFTConfig(BaseModel):
     max_repair_attempts: int = 2
     dedup_threshold: float = 0.9
     eval_holdout_fraction: float = 0.05
+
+    # Trajectory-level knobs (lifted out of hard-coded defaults so they can be
+    # tuned per run without code edits).
+    max_turns: int = 6
+    """Maximum number of user turns per trajectory."""
+    use_planner: bool = False
+    """Run the planner LLM step. Off by default — the deterministic scenario
+    generator already encodes the principle/procedure selection, so the planner
+    is pure overhead in steady-state runs."""
+    temperature_planner: float = 0.2
+    temperature_assistant: float = 0.7
+    temperature_user_sim: float = 0.8
+    temperature_critic: float = 0.0
 
 
 class RewardConfig(BaseModel):

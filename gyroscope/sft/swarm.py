@@ -110,7 +110,7 @@ async def _bounded_build(
         scenario,
         golden,
         client,
-        max_turns=6,
+        max_turns=config.max_turns,
         personas=personas,
         config=config,
     )
